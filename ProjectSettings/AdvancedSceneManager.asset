@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &1
+MonoBehaviour:
+  m_ObjectHideFlags: 53
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 00a3dfc3979b132458a8f7f06f6b0d5e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sceneData:
+    dict:
+      m_throw: 1
+      m_keys: []
+      m_values: []
+  m_profiles: []
+  m_scenes: []
+  m_collections: []
+  m_collectionTemplates: []
+  m_sceneHelper: {fileID: 11400000, guid: 76b7bbebc13f0914d9760382f86bf158, type: 2}
+  m_defaultScenes: {fileID: 11400000, guid: b09d893c6dbacf541906e890a0840393, type: 2}
+  m_defaultProfile: {fileID: 0}
+  m_forceProfile: {fileID: 0}
+  m_buildProfile: {fileID: 0}
+  m_checkForDuplicateSceneOperations: 1
+  m_preventSpammingEventMethods: 1
+  m_spamCheckCooldown: 0.5
+  m_blacklist:
+    list: []
+  m_whitelist:
+    list: []
+  m_enableCrossSceneReferences: 0
+  m_enableGUIDReferences: 1
+  m_sceneImportOption: 0
+  m_allowExcludingCollectionsFromBuild: 0
+  m_reverseUnloadOrderOnCollectionClose: 1
+  m_autoUpdateBuildScenes: 1
+  m_assetPath: Assets/Settings/AdvancedSceneManager
+  m_customData:
+    dict:
+      m_throw: 1
+      m_keys: []
+      m_values: []
+  m_unitySplashScreenColor: {r: 0, g: 0, b: 0, a: 1}
+  m_allowSceneLocking: 1
+  m_allowCollectionLocking: 1
+  m_openCollection: {fileID: 0}
+  m_additiveCollections: []
+  m_fadeScene: {fileID: 0}
+  m_allowLoadingScenesInParallel: 0
+  m_allowUpdateCheck: 1

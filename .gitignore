@@ -176,3 +176,13 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/unity,rider,windows
+/Assets/ConsolePro*
+/Assets/Editor Default Resources*
+/Assets/Fullscreen*
+/Assets/Gizmos*
+/Assets/iPoly3D*
+/Assets/Plugins*
+/Assets/Resources*
+/Assets/SelectionHistory*
+/Assets/Settings*
+/Packages/com.lazy*
