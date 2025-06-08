@@ -30,7 +30,7 @@ namespace SoftBody.Scripts
         [SerializeField] private InputReaderSO inputReader;
 
         private List<SoftBodyParticleCPU> _particles = new();
-        private List<DistanceConstraint> _distanceConstraints = new();
+        private List<CPUDistanceConstraint> _distanceConstraints = new();
         private Mesh _displayMesh;
         private Vector3[] _meshVertices;
 
@@ -276,7 +276,7 @@ namespace SoftBody.Scripts
             var particleA = _particles[particleAIndex];
             var particleB = _particles[particleBIndex];
             var restLength = Vector3.Distance(particleA.Position, particleB.Position);
-            _distanceConstraints.Add(new DistanceConstraint(particleA, particleB, restLength, compliance, float.MaxValue));
+            _distanceConstraints.Add(new CPUDistanceConstraint(particleA, particleB, restLength, compliance, float.MaxValue));
         }
 
 

@@ -1,19 +1,113 @@
-// Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel CSMain
+#pragma kernel PredictPositions
+#pragma kernel SolveDistances
+#pragma kernel UpdateState
+#pragma kernel ApplyDamping
 
+// --- Data Structures ---
 struct Particle
 {
     float3 position;
-    float3 predicted_position;
+    float3 predictedPosition;
     float3 velocity;
-    float inverse_mass;
+    float inverseMass;
 };
 
-RWStructuredBuffer<Particle> particles;
-
-[numthreads(64,1,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+struct DistanceConstraint
 {
-    // test, move particles up
-    particles[id.x].position.y += 0.001;
+    uint p1, p2;
+    float restLength;
+};
+
+// --- Buffers ---
+RWStructuredBuffer<Particle> particles;
+StructuredBuffer<DistanceConstraint> constraints;
+RWStructuredBuffer<float> lagrangeMultipliers;
+
+// --- Uniforms ---
+int _ParticleCount;
+int _ConstraintCount;
+float _DeltaTime;
+float3 _Gravity;
+float _GroundHeight;
+float _Damping;
+float _DistanceCompliance;
+
+// KERNEL 1: Predicts new positions based on velocity and gravity.
+[numthreads(64,1,1)]
+void PredictPositions (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ParticleCount) return;
+
+    Particle p = particles[i];
+
+    if (p.inverseMass > 0)
+    {
+        p.velocity += _Gravity * _DeltaTime;
+    }
+    p.predictedPosition = p.position + p.velocity * _DeltaTime;
+    
+    if (p.predictedPosition.y < _GroundHeight)
+    {
+        p.predictedPosition.y = _GroundHeight;
+    }
+    particles[i] = p;
+}
+
+// KERNEL 2: Solves distance constraints using XPBD.
+[numthreads(64,1,1)]
+void SolveDistances(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ConstraintCount) return;
+
+    DistanceConstraint c = constraints[i];
+    Particle p1 = particles[c.p1];
+    Particle p2 = particles[c.p2];
+
+    float w1 = p1.inverseMass;
+    float w2 = p2.inverseMass;
+    float totalInverseMass = w1 + w2;
+
+    if (totalInverseMass == 0) return;
+
+    float3 n = p1.predictedPosition - p2.predictedPosition;
+    float d = length(n);
+    if (d < 0.0001f) return;
+    n /= d;
+
+    float C = d - c.restLength;
+    float lambda = lagrangeMultipliers[i];
+    float alpha_tilde = _DistanceCompliance / (_DeltaTime * _DeltaTime);
+    float delta_lambda = (-C - alpha_tilde * lambda) / (totalInverseMass + alpha_tilde);
+
+    p1.predictedPosition += w1 * delta_lambda * n;
+    p2.predictedPosition -= w2 * delta_lambda * n;
+
+    particles[c.p1] = p1;
+    particles[c.p2] = p2;
+    lagrangeMultipliers[i] += delta_lambda;
+}
+
+// KERNEL 3: Updates final positions and velocities.
+[numthreads(64,1,1)]
+void UpdateState (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ParticleCount) return;
+
+    Particle p = particles[i];
+    p.velocity = (p.predictedPosition - p.position) / _DeltaTime;
+    p.position = p.predictedPosition;
+    particles[i] = p;
+}
+
+// KERNEL 4: Applies velocity damping once per frame.
+[numthreads(64,1,1)]
+void ApplyDamping(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ParticleCount) return;
+
+    particles[i].velocity *= (1.0 - _Damping);
 }

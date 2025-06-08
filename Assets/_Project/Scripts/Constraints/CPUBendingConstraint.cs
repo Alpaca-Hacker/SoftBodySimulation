@@ -1,7 +1,7 @@
 using SoftBody.Scripts.Models;
 using UnityEngine;
 
-public class BendingConstraint
+public class CPUBendingConstraint
 {
     public SoftBodyParticleCPU ParticleCPUA;
     public SoftBodyParticleCPU ParticleCPUB;
@@ -15,7 +15,7 @@ public class BendingConstraint
     private readonly bool _isDebugConstraint = false; // Flag for debugging specific constraints
     private float _maxLambdaChange;
 
-    public BendingConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, 
+    public CPUBendingConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, 
         SoftBodyParticleCPU particleCPUC, SoftBodyParticleCPU particleCPUD, float restAngle, float compliance, bool isDebugConstraint, float maxLambdaChange)
     {
         ParticleCPUA = particleCPUA;

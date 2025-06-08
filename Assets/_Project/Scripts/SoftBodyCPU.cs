@@ -39,8 +39,8 @@ namespace SoftBody.Scripts
         public InitializationMode currentInitializationMode = InitializationMode.FromSourceMesh;
 
         private List<SoftBodyParticleCPU> _particles = new();
-        private List<DistanceConstraint> _distanceConstraints = new();
-        private List<BendingConstraint> _bendingConstraints = new();
+        private List<CPUDistanceConstraint> _distanceConstraints = new();
+        private List<CPUBendingConstraint> _bendingConstraints = new();
         private Mesh _displayMesh;
         private Vector3[] _initialMeshVerticesLocal;
         private Vector3[] _currentMeshVerticesLocal;
@@ -186,7 +186,7 @@ namespace SoftBody.Scripts
                 {
                     Debug.Log("Added debug mode for constraint between ParticleA(" + p1.Id + ") and ParticleB(" + p2.Id + ")");
                 }// Optional debug mode for every 1000th constraint
-                _distanceConstraints.Add(new DistanceConstraint(p1, p2, restLength, globalCompliance, maxLambdaChangeDist, debugMode));
+                _distanceConstraints.Add(new CPUDistanceConstraint(p1, p2, restLength, globalCompliance, maxLambdaChangeDist, debugMode));
                 counter++;
             }
 
@@ -253,9 +253,9 @@ namespace SoftBody.Scripts
             // Check for degenerate case (e.g. p2 or p3 is same as p0 or p1, though unlikely with good mesh)
             if (particleC == particleA || particleC == particleB || particleD == particleA || particleD == particleB || particleC == particleD) continue;
 
-            var restAngle = BendingConstraint.CalculateRestAngle(particleA.Position, particleB.Position, particleC.Position, particleD.Position);
+            var restAngle = CPUBendingConstraint.CalculateRestAngle(particleA.Position, particleB.Position, particleC.Position, particleD.Position);
             
-            _bendingConstraints.Add(new BendingConstraint(particleA, particleB, particleC, particleD, restAngle, bendingCompliance, debug, maxLambdaChangeDist));
+            _bendingConstraints.Add(new CPUBendingConstraint(particleA, particleB, particleC, particleD, restAngle, bendingCompliance, debug, maxLambdaChangeDist));
             
             debug = false;
         }
@@ -414,8 +414,6 @@ private void FixedUpdate()
                 return;
             }
 
-            return;
-
             if (_particles == null || _particles.Count == 0)
             {
                 return; // Nothing to draw if particles aren't ready
@@ -484,7 +482,7 @@ private void FixedUpdate()
             // Create distance constraint
             var restLength = Vector3.Distance(_particles[0].Position, _particles[1].Position);
             // Make sure 'globalCompliance' is the variable you tune in the inspector
-            _distanceConstraints.Add(new DistanceConstraint(_particles[0], _particles[1], restLength, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[0], _particles[1], restLength, globalCompliance, maxLambdaChangeDist));
 
             Debug.Log("Created Test: 2 Particles, 1 Distance Constraint.");
             // For this test, DistanceConstraint.Solve() should NOT have internal clamping on deltaLambda yet.
@@ -506,10 +504,10 @@ private void FixedUpdate()
             _particles.Add(new SoftBodyParticleCPU(pos2, particleMass, 2));
 
             var restLength1 = Vector3.Distance(_particles[0].Position, _particles[1].Position);
-            _distanceConstraints.Add(new DistanceConstraint(_particles[0], _particles[1], restLength1, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[0], _particles[1], restLength1, globalCompliance, maxLambdaChangeDist));
 
             var restLength2 = Vector3.Distance(_particles[1].Position, _particles[2].Position);
-            _distanceConstraints.Add(new DistanceConstraint(_particles[1], _particles[2], restLength2, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[1], _particles[2], restLength2, globalCompliance, maxLambdaChangeDist));
 
             Debug.Log("Created Test: 3 Particles (Line), 2 Distance Constraints.");
         }
@@ -530,13 +528,13 @@ private void FixedUpdate()
             _particles.Add(new SoftBodyParticleCPU(pos2, particleMass, 2));
 
             var r01 = Vector3.Distance(_particles[0].Position, _particles[1].Position);
-            _distanceConstraints.Add(new DistanceConstraint(_particles[0], _particles[1], r01, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[0], _particles[1], r01, globalCompliance, maxLambdaChangeDist));
 
             var r12 = Vector3.Distance(_particles[1].Position, _particles[2].Position);
-            _distanceConstraints.Add(new DistanceConstraint(_particles[1], _particles[2], r12, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[1], _particles[2], r12, globalCompliance, maxLambdaChangeDist));
 
             var r20 = Vector3.Distance(_particles[2].Position, _particles[0].Position);
-            _distanceConstraints.Add(new DistanceConstraint(_particles[2], _particles[0], r20, globalCompliance, maxLambdaChangeDist));
+            _distanceConstraints.Add(new CPUDistanceConstraint(_particles[2], _particles[0], r20, globalCompliance, maxLambdaChangeDist));
 
             Debug.Log("Created Test: 3 Particles (Triangle), 3 Distance Constraints.");
         }
@@ -572,11 +570,11 @@ private void FixedUpdate()
     // Add essential distance constraints to hold the triangles' shapes
     // Use a stiffer compliance for distance constraints in this specific test to isolate bending behavior
     var distanceTestCompliance = 0.00001f; // Make these fairly stiff
-    _distanceConstraints.Add(new DistanceConstraint(sbp0, sbp1, Vector3.Distance(sbp0.Position, sbp1.Position), distanceTestCompliance, maxLambdaChangeDist)); // Hinge
-    _distanceConstraints.Add(new DistanceConstraint(sbp0, sbp2, Vector3.Distance(sbp0.Position, sbp2.Position), distanceTestCompliance, maxLambdaChangeDist));
-    _distanceConstraints.Add(new DistanceConstraint(sbp1, sbp2, Vector3.Distance(sbp1.Position, sbp2.Position), distanceTestCompliance, maxLambdaChangeDist));
-    _distanceConstraints.Add(new DistanceConstraint(sbp0, sbp3, Vector3.Distance(sbp0.Position, sbp3.Position), distanceTestCompliance, maxLambdaChangeDist));
-    _distanceConstraints.Add(new DistanceConstraint(sbp1, sbp3, Vector3.Distance(sbp1.Position, sbp3.Position), distanceTestCompliance, maxLambdaChangeDist));
+    _distanceConstraints.Add(new CPUDistanceConstraint(sbp0, sbp1, Vector3.Distance(sbp0.Position, sbp1.Position), distanceTestCompliance, maxLambdaChangeDist)); // Hinge
+    _distanceConstraints.Add(new CPUDistanceConstraint(sbp0, sbp2, Vector3.Distance(sbp0.Position, sbp2.Position), distanceTestCompliance, maxLambdaChangeDist));
+    _distanceConstraints.Add(new CPUDistanceConstraint(sbp1, sbp2, Vector3.Distance(sbp1.Position, sbp2.Position), distanceTestCompliance, maxLambdaChangeDist));
+    _distanceConstraints.Add(new CPUDistanceConstraint(sbp0, sbp3, Vector3.Distance(sbp0.Position, sbp3.Position), distanceTestCompliance, maxLambdaChangeDist));
+    _distanceConstraints.Add(new CPUDistanceConstraint(sbp1, sbp3, Vector3.Distance(sbp1.Position, sbp3.Position), distanceTestCompliance, maxLambdaChangeDist));
     // Optionally, a constraint between P2 and P3 if they should not pass through each other,
     // but not strictly needed for the bending test itself.
     // _distanceConstraints.Add(new DistanceConstraint(sbp2, sbp3, Vector3.Distance(sbp2.Position, sbp3.Position), distanceTestCompliance));
@@ -584,13 +582,13 @@ private void FixedUpdate()
 
     // Add THE bending constraint
     // The constructor order: ParticleA, ParticleB (hinge), ParticleC (tip1), ParticleD (tip2)
-    var restAngle = BendingConstraint.CalculateRestAngle(sbp0.Position, sbp1.Position, sbp2.Position, sbp3.Position);
+    var restAngle = CPUBendingConstraint.CalculateRestAngle(sbp0.Position, sbp1.Position, sbp2.Position, sbp3.Position);
     Debug.Log($"Calculated Rest Angle for Butterfly Test: {restAngle * Mathf.Rad2Deg} degrees");
 
     // Make sure BendingConstraint constructor matches:
     // (pA, pB, pC, pD, angle, compliance, isDebug, maxLambdaChangeVal)
     // The 'maxLambdaChange' from SoftBodyCPU field will be passed.
-    _bendingConstraints.Add(new BendingConstraint(sbp0, sbp1, sbp2, sbp3, restAngle, bendingCompliance, true, maxLambdaChangeBend)); // true for isDebugConstraint
+    _bendingConstraints.Add(new CPUBendingConstraint(sbp0, sbp1, sbp2, sbp3, restAngle, bendingCompliance, true, maxLambdaChangeBend)); // true for isDebugConstraint
 
     Debug.Log("Created Test: 4 Particles (Butterfly), 5-6 Distance Constraints, 1 Bending Constraint.");
     Debug.Log($"Bending constraint will use maxLambdaChange: {maxLambdaChangeBend} from SoftBodyCPU inspector.");

@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace SoftBody.Scripts.Constraints
 {
-    public class DistanceConstraint
+    public class CPUDistanceConstraint
     {
         public SoftBodyParticleCPU ParticleCPUA;
         public SoftBodyParticleCPU ParticleCPUB;
@@ -14,7 +14,7 @@ namespace SoftBody.Scripts.Constraints
         private float _maxLambdaChange;
         private readonly bool _isDebugConstraint;
 
-        public DistanceConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, float restLength, float compliance, float maxLambdaChange, bool isDebugConstraint = false)
+        public CPUDistanceConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, float restLength, float compliance, float maxLambdaChange, bool isDebugConstraint = false)
         {
             ParticleCPUA = particleCPUA;
             ParticleCPUB = particleCPUB;
