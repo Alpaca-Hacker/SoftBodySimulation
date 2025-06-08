@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace SoftBody.Scripts.Models
 {
-    public class SoftBodyParticle
+    public class SoftBodyParticleCPU
     {
         public int Id; 
         public float Mass;
@@ -12,7 +12,7 @@ namespace SoftBody.Scripts.Models
         public Vector3 Velocity;
         public Vector3 ExternalForceAccumulator; 
 
-        public SoftBodyParticle(Vector3 initialPosition, float mass, int id)
+        public SoftBodyParticleCPU(Vector3 initialPosition, float mass, int id)
         {
             Id = id;
             Mass = mass;

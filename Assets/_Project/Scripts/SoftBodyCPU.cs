@@ -38,7 +38,7 @@ namespace SoftBody.Scripts
         [Header("Test Configurations")]
         public InitializationMode currentInitializationMode = InitializationMode.FromSourceMesh;
 
-        private List<SoftBodyParticle> _particles = new();
+        private List<SoftBodyParticleCPU> _particles = new();
         private List<DistanceConstraint> _distanceConstraints = new();
         private List<BendingConstraint> _bendingConstraints = new();
         private Mesh _displayMesh;
@@ -141,7 +141,7 @@ namespace SoftBody.Scripts
             for (var i = 0; i < _initialMeshVerticesLocal.Length; i++)
             {
                 var worldPos = transform.TransformPoint(_initialMeshVerticesLocal[i]);
-                _particles.Add(new SoftBodyParticle(worldPos, particleMass, i));
+                _particles.Add(new SoftBodyParticleCPU(worldPos, particleMass, i));
             }
 
             Debug.Log($"Initialized {_particles.Count} particles from mesh vertices.");
@@ -435,9 +435,9 @@ private void FixedUpdate()
                 Gizmos.color = Color.cyan;
                 foreach (var constraint in _distanceConstraints)
                 {
-                    if (constraint.ParticleA != null && constraint.ParticleB != null)
+                    if (constraint.ParticleCPUA != null && constraint.ParticleCPUB != null)
                     {
-                        Gizmos.DrawLine(constraint.ParticleA.Position, constraint.ParticleB.Position);
+                        Gizmos.DrawLine(constraint.ParticleCPUA.Position, constraint.ParticleCPUB.Position);
                     }
                 }
             }
@@ -478,8 +478,8 @@ private void FixedUpdate()
             var pos1 = transform.TransformPoint(new Vector3(1, 0, 0));
 
             // Create particles
-            _particles.Add(new SoftBodyParticle(pos0, particleMass, 0));
-            _particles.Add(new SoftBodyParticle(pos1, particleMass, 1));
+            _particles.Add(new SoftBodyParticleCPU(pos0, particleMass, 0));
+            _particles.Add(new SoftBodyParticleCPU(pos1, particleMass, 1));
 
             // Create distance constraint
             var restLength = Vector3.Distance(_particles[0].Position, _particles[1].Position);
@@ -501,9 +501,9 @@ private void FixedUpdate()
             var pos1 = transform.TransformPoint(new Vector3(1, 0, 0));
             var pos2 = transform.TransformPoint(new Vector3(2, 0, 0));
 
-            _particles.Add(new SoftBodyParticle(pos0, particleMass, 0));
-            _particles.Add(new SoftBodyParticle(pos1, particleMass, 1));
-            _particles.Add(new SoftBodyParticle(pos2, particleMass, 2));
+            _particles.Add(new SoftBodyParticleCPU(pos0, particleMass, 0));
+            _particles.Add(new SoftBodyParticleCPU(pos1, particleMass, 1));
+            _particles.Add(new SoftBodyParticleCPU(pos2, particleMass, 2));
 
             var restLength1 = Vector3.Distance(_particles[0].Position, _particles[1].Position);
             _distanceConstraints.Add(new DistanceConstraint(_particles[0], _particles[1], restLength1, globalCompliance, maxLambdaChangeDist));
@@ -525,9 +525,9 @@ private void FixedUpdate()
             var pos1 = transform.TransformPoint(new Vector3(1, 0, 0));
             var pos2 = transform.TransformPoint(new Vector3(0.5f, Mathf.Sqrt(0.75f), 0)); // Approx 0.866 for equilateral
 
-            _particles.Add(new SoftBodyParticle(pos0, particleMass, 0));
-            _particles.Add(new SoftBodyParticle(pos1, particleMass, 1));
-            _particles.Add(new SoftBodyParticle(pos2, particleMass, 2));
+            _particles.Add(new SoftBodyParticleCPU(pos0, particleMass, 0));
+            _particles.Add(new SoftBodyParticleCPU(pos1, particleMass, 1));
+            _particles.Add(new SoftBodyParticleCPU(pos2, particleMass, 2));
 
             var r01 = Vector3.Distance(_particles[0].Position, _particles[1].Position);
             _distanceConstraints.Add(new DistanceConstraint(_particles[0], _particles[1], r01, globalCompliance, maxLambdaChangeDist));
@@ -559,10 +559,10 @@ private void FixedUpdate()
     // Optionally, perturb one particle slightly to see correction:
     // p2_local = new Vector3(0.5f, 0.4f, 0.1f); 
 
-    _particles.Add(new SoftBodyParticle(transform.TransformPoint(p0_local), particleMass, 0)); // P0
-    _particles.Add(new SoftBodyParticle(transform.TransformPoint(p1_local), particleMass, 1)); // P1
-    _particles.Add(new SoftBodyParticle(transform.TransformPoint(p2_local), particleMass, 2)); // P2 (ParticleC in your BendingConstraint)
-    _particles.Add(new SoftBodyParticle(transform.TransformPoint(p3_local), particleMass, 3)); // P3 (ParticleD in your BendingConstraint)
+    _particles.Add(new SoftBodyParticleCPU(transform.TransformPoint(p0_local), particleMass, 0)); // P0
+    _particles.Add(new SoftBodyParticleCPU(transform.TransformPoint(p1_local), particleMass, 1)); // P1
+    _particles.Add(new SoftBodyParticleCPU(transform.TransformPoint(p2_local), particleMass, 2)); // P2 (ParticleC in your BendingConstraint)
+    _particles.Add(new SoftBodyParticleCPU(transform.TransformPoint(p3_local), particleMass, 3)); // P3 (ParticleD in your BendingConstraint)
 
     var sbp0 = _particles[0];
     var sbp1 = _particles[1];

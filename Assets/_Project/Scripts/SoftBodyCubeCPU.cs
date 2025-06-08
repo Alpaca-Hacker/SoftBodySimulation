@@ -29,7 +29,7 @@ namespace SoftBody.Scripts
         [Header("Debug")]
         [SerializeField] private InputReaderSO inputReader;
 
-        private List<SoftBodyParticle> _particles = new();
+        private List<SoftBodyParticleCPU> _particles = new();
         private List<DistanceConstraint> _distanceConstraints = new();
         private Mesh _displayMesh;
         private Vector3[] _meshVertices;
@@ -220,7 +220,7 @@ namespace SoftBody.Scripts
 
             for (var i = 0; i < localParticlePositions.Length; i++)
             {
-                _particles.Add(new SoftBodyParticle(transform.TransformPoint(localParticlePositions[i]), particleMass, i));
+                _particles.Add(new SoftBodyParticleCPU(transform.TransformPoint(localParticlePositions[i]), particleMass, i));
             }
 
             // Define edge distance constraints (12)
@@ -502,9 +502,9 @@ namespace SoftBody.Scripts
             Gizmos.color = Color.cyan;
             foreach (var constraint in _distanceConstraints)
             {
-                if (constraint.ParticleA != null && constraint.ParticleB != null)
+                if (constraint.ParticleCPUA != null && constraint.ParticleCPUB != null)
                 {
-                    Gizmos.DrawLine(constraint.ParticleA.Position, constraint.ParticleB.Position);
+                    Gizmos.DrawLine(constraint.ParticleCPUA.Position, constraint.ParticleCPUB.Position);
                 }
             }
 

@@ -5,8 +5,8 @@ namespace SoftBody.Scripts.Constraints
 {
     public class DistanceConstraint
     {
-        public SoftBodyParticle ParticleA;
-        public SoftBodyParticle ParticleB;
+        public SoftBodyParticleCPU ParticleCPUA;
+        public SoftBodyParticleCPU ParticleCPUB;
         public float RestLength;
         public float Compliance; // Alpha in XPBD
 
@@ -14,10 +14,10 @@ namespace SoftBody.Scripts.Constraints
         private float _maxLambdaChange;
         private readonly bool _isDebugConstraint;
 
-        public DistanceConstraint(SoftBodyParticle particleA, SoftBodyParticle particleB, float restLength, float compliance, float maxLambdaChange, bool isDebugConstraint = false)
+        public DistanceConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, float restLength, float compliance, float maxLambdaChange, bool isDebugConstraint = false)
         {
-            ParticleA = particleA;
-            ParticleB = particleB;
+            ParticleCPUA = particleCPUA;
+            ParticleCPUB = particleCPUB;
             RestLength = restLength;
             Compliance = compliance;
             _lambda = 0f; // Initialize lambda
@@ -25,7 +25,7 @@ namespace SoftBody.Scripts.Constraints
             _isDebugConstraint = isDebugConstraint;
             if (isDebugConstraint)
             {
-                Debug.Log($"DistanceConstraint created between ParticleA({particleA.Id}) and ParticleB({particleB.Id}) with RestLength: {restLength}, Compliance: {compliance}");
+                Debug.Log($"DistanceConstraint created between ParticleA({particleCPUA.Id}) and ParticleB({particleCPUB.Id}) with RestLength: {restLength}, Compliance: {compliance}");
             }
         }
 
@@ -45,15 +45,15 @@ namespace SoftBody.Scripts.Constraints
 
         public void Solve(float deltaTime)
         {
-            if (ParticleA.InverseMass < 0.00001f && ParticleB.InverseMass < 0.00001f) return; // Both particles are static
+            if (ParticleCPUA.InverseMass < 0.00001f && ParticleCPUB.InverseMass < 0.00001f) return; // Both particles are static
 
             if (_isDebugConstraint)
             {
-                Debug.Log("---Solving DistanceConstraint between ParticleA(" + ParticleA.Id + ") and ParticleB(" +
-                          ParticleB.Id + ")---");
+                Debug.Log("---Solving DistanceConstraint between ParticleA(" + ParticleCPUA.Id + ") and ParticleB(" +
+                          ParticleCPUB.Id + ")---");
             }
 
-            var direction = ParticleB.PredictedPosition - ParticleA.PredictedPosition;
+            var direction = ParticleCPUB.PredictedPosition - ParticleCPUA.PredictedPosition;
             var currentLength = direction.magnitude;
             
             if (_isDebugConstraint)
@@ -84,7 +84,7 @@ namespace SoftBody.Scripts.Constraints
             // Calculate deltaLambda
             // The denominator term involves the sum of w_i * |gradient_i|^2. For distance constraint, gradient magnitude is 1.
             // So it's w1*1 + w2*1 = P1.InverseMass + P2.InverseMass
-            var denominator = ParticleA.InverseMass + ParticleB.InverseMass + alphaTilde;
+            var denominator = ParticleCPUA.InverseMass + ParticleCPUB.InverseMass + alphaTilde;
             
             if (_isDebugConstraint)
             {
@@ -103,8 +103,8 @@ namespace SoftBody.Scripts.Constraints
                 Debug.Log($"DistanceConstraint deltaLambda_raw: {deltaLambda_raw}, final_deltaLambda: {final_deltaLambda}, _lambda: {_lambda}");
             }
 
-            var dP1 = -ParticleA.InverseMass * final_deltaLambda * gradient;
-            var dP2 = ParticleB.InverseMass * final_deltaLambda * gradient;
+            var dP1 = -ParticleCPUA.InverseMass * final_deltaLambda * gradient;
+            var dP2 = ParticleCPUB.InverseMass * final_deltaLambda * gradient;
             
             if (_isDebugConstraint)
             {
@@ -112,8 +112,8 @@ namespace SoftBody.Scripts.Constraints
             }
 
             // Apply corrections to predicted positions
-            ParticleA.PredictedPosition += dP1;
-            ParticleB.PredictedPosition += dP2;
+            ParticleCPUA.PredictedPosition += dP1;
+            ParticleCPUB.PredictedPosition += dP2;
         }
     }
 }

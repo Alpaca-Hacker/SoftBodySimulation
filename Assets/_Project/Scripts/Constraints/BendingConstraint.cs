@@ -3,10 +3,10 @@ using UnityEngine;
 
 public class BendingConstraint
 {
-    public SoftBodyParticle ParticleA;
-    public SoftBodyParticle ParticleB;
-    public SoftBodyParticle ParticleC;
-    public SoftBodyParticle ParticleD;
+    public SoftBodyParticleCPU ParticleCPUA;
+    public SoftBodyParticleCPU ParticleCPUB;
+    public SoftBodyParticleCPU ParticleCPUC;
+    public SoftBodyParticleCPU ParticleCPUD;
     
     public float RestAngle; // Radians
     public float Compliance; 
@@ -15,13 +15,13 @@ public class BendingConstraint
     private readonly bool _isDebugConstraint = false; // Flag for debugging specific constraints
     private float _maxLambdaChange;
 
-    public BendingConstraint(SoftBodyParticle particleA, SoftBodyParticle particleB, 
-        SoftBodyParticle particleC, SoftBodyParticle particleD, float restAngle, float compliance, bool isDebugConstraint, float maxLambdaChange)
+    public BendingConstraint(SoftBodyParticleCPU particleCPUA, SoftBodyParticleCPU particleCPUB, 
+        SoftBodyParticleCPU particleCPUC, SoftBodyParticleCPU particleCPUD, float restAngle, float compliance, bool isDebugConstraint, float maxLambdaChange)
     {
-        ParticleA = particleA;
-        ParticleB = particleB;
-        ParticleC = particleC;
-        ParticleD = particleD;
+        ParticleCPUA = particleCPUA;
+        ParticleCPUB = particleCPUB;
+        ParticleCPUC = particleCPUC;
+        ParticleCPUD = particleCPUD;
         RestAngle = restAngle;
         Compliance = compliance;
         _isDebugConstraint = isDebugConstraint;
@@ -39,16 +39,16 @@ public class BendingConstraint
 
 public void Solve(float deltaTime)
 {
-    if (ParticleA.InverseMass < 0.00001f && ParticleB.InverseMass < 0.00001f &&
-        ParticleC.InverseMass < 0.00001f && ParticleD.InverseMass < 0.00001f)
+    if (ParticleCPUA.InverseMass < 0.00001f && ParticleCPUB.InverseMass < 0.00001f &&
+        ParticleCPUC.InverseMass < 0.00001f && ParticleCPUD.InverseMass < 0.00001f)
     {
         return;
     }
 
-    var pA_pred = ParticleA.PredictedPosition;
-    var pB_pred = ParticleB.PredictedPosition;
-    var pC_pred = ParticleC.PredictedPosition;
-    var pD_pred = ParticleD.PredictedPosition;
+    var pA_pred = ParticleCPUA.PredictedPosition;
+    var pB_pred = ParticleCPUB.PredictedPosition;
+    var pC_pred = ParticleCPUC.PredictedPosition;
+    var pD_pred = ParticleCPUD.PredictedPosition;
 
     var e0 = pB_pred - pA_pred;
     var e1 = pC_pred - pA_pred;
@@ -123,10 +123,10 @@ public void Solve(float deltaTime)
             grad_pB = Vector3.Cross(e1, term_gu_common / l_n1) + Vector3.Cross(term_gv_common / l_n2, e2);
             grad_pA = -grad_pB - grad_pC - grad_pD;
 
-            sum_grad_sq_w = ParticleA.InverseMass * grad_pA.sqrMagnitude +
-                            ParticleB.InverseMass * grad_pB.sqrMagnitude +
-                            ParticleC.InverseMass * grad_pC.sqrMagnitude +
-                            ParticleD.InverseMass * grad_pD.sqrMagnitude;
+            sum_grad_sq_w = ParticleCPUA.InverseMass * grad_pA.sqrMagnitude +
+                            ParticleCPUB.InverseMass * grad_pB.sqrMagnitude +
+                            ParticleCPUC.InverseMass * grad_pC.sqrMagnitude +
+                            ParticleCPUD.InverseMass * grad_pD.sqrMagnitude;
 
             if (sum_grad_sq_w + current_alpha_tilde >= geomEpsilon)
             {
@@ -144,7 +144,7 @@ public void Solve(float deltaTime)
     if (_isDebugConstraint)
     {
         var alpha_tilde_for_log = Compliance / (deltaTime * deltaTime);
-        Debug.Log($"--- Bending Constraint Debug (P0:{ParticleA.Id}, P1:{ParticleB.Id}, P2:{ParticleC.Id}, P3:{ParticleD.Id}) ---");
+        Debug.Log($"--- Bending Constraint Debug (P0:{ParticleCPUA.Id}, P1:{ParticleCPUB.Id}, P2:{ParticleCPUC.Id}, P3:{ParticleCPUD.Id}) ---");
         Debug.Log($"C: {C:F7}, Current Angle: {currentAngle * Mathf.Rad2Deg:F2} deg, Rest: {RestAngle * Mathf.Rad2Deg:F2} deg");
         Debug.Log($"sinTheta: {sinTheta:F7}, invSinTheta (if used): {(Mathf.Abs(sinTheta) < stabilityEpsilonForSinTheta ? "N/A (sinTheta too small)" : (1.0f/sinTheta).ToString("F7"))}");
         Debug.Log($"grad_pA: {grad_pA.magnitude:F7}, grad_pB: {grad_pB.magnitude:F7}, grad_pC: {grad_pC.magnitude:F7}, grad_pD: {grad_pD.magnitude:F7}");
@@ -158,10 +158,10 @@ public void Solve(float deltaTime)
     {
         // The gradients grad_pA etc. will be non-zero only if we went through the 'else' block of the sinTheta check.
         // If sinTheta was too small, gradients remain Vector3.zero, so no correction is applied here, which is correct.
-        ParticleA.PredictedPosition += ParticleA.InverseMass * final_deltaLambda_to_accumulate * grad_pA;
-        ParticleB.PredictedPosition += ParticleB.InverseMass * final_deltaLambda_to_accumulate * grad_pB;
-        ParticleC.PredictedPosition += ParticleC.InverseMass * final_deltaLambda_to_accumulate * grad_pC;
-        ParticleD.PredictedPosition += ParticleD.InverseMass * final_deltaLambda_to_accumulate * grad_pD;
+        ParticleCPUA.PredictedPosition += ParticleCPUA.InverseMass * final_deltaLambda_to_accumulate * grad_pA;
+        ParticleCPUB.PredictedPosition += ParticleCPUB.InverseMass * final_deltaLambda_to_accumulate * grad_pB;
+        ParticleCPUC.PredictedPosition += ParticleCPUC.InverseMass * final_deltaLambda_to_accumulate * grad_pC;
+        ParticleCPUD.PredictedPosition += ParticleCPUD.InverseMass * final_deltaLambda_to_accumulate * grad_pD;
     }
 }
 
