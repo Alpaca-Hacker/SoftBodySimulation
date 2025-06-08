@@ -276,7 +276,7 @@ namespace SoftBody.Scripts
             var particleA = _particles[particleAIndex];
             var particleB = _particles[particleBIndex];
             var restLength = Vector3.Distance(particleA.Position, particleB.Position);
-            _distanceConstraints.Add(new DistanceConstraint(particleA, particleB, restLength, compliance));
+            _distanceConstraints.Add(new DistanceConstraint(particleA, particleB, restLength, compliance, float.MaxValue));
         }
 
 

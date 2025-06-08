@@ -186,3 +186,6 @@ $RECYCLE.BIN/
 /Assets/SelectionHistory*
 /Assets/Settings*
 /Packages/com.lazy*
+/Assets/PolygonPrototype*
+/.idea/*
+/ProjectSettings/*
