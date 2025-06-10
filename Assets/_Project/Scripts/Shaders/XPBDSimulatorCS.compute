@@ -31,6 +31,8 @@ float3 _Gravity;
 float _GroundHeight;
 float _Damping;
 float _DistanceCompliance;
+float _BendingCompliance;
+int _DistanceConstraintCount;
 
 // KERNEL 1: Predicts new positions based on velocity and gravity.
 [numthreads(64,1,1)]
@@ -77,8 +79,15 @@ void SolveDistances(uint3 id : SV_DispatchThreadID)
     n /= d;
 
     float C = d - c.restLength;
+
+    float compliance = _DistanceCompliance;
+    if (i >= _DistanceConstraintCount) // Check if this is a bending constraint
+    {
+        compliance = _BendingCompliance;
+    }
+    
     float lambda = lagrangeMultipliers[i];
-    float alpha_tilde = _DistanceCompliance / (_DeltaTime * _DeltaTime);
+    float alpha_tilde = compliance / (_DeltaTime * _DeltaTime);
     float delta_lambda = (-C - alpha_tilde * lambda) / (totalInverseMass + alpha_tilde);
 
     p1.predictedPosition += w1 * delta_lambda * n;
@@ -97,8 +106,10 @@ void UpdateState (uint3 id : SV_DispatchThreadID)
     if (i >= _ParticleCount) return;
 
     Particle p = particles[i];
+    
     p.velocity = (p.predictedPosition - p.position) / _DeltaTime;
     p.position = p.predictedPosition;
+    
     particles[i] = p;
 }
 
