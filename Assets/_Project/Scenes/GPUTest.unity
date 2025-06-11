@@ -1390,7 +1390,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 4cc73f247dcc2e841a79a5290b72c2c4, type: 2}
+  - {fileID: -690244616199645534, guid: 5e259006bffc7564c838c91dbfc0d73d, type: 3}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1433,13 +1433,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   computeShader: {fileID: 7200000, guid: ca8c23a401dc023488fe9b0e57404ced, type: 3}
-  substeps: 100
-  solverIterations: 5
-  gravity: {x: 0, y: -0.1, z: 0}
+  substeps: 5
+  solverIterations: 3
+  gravity: {x: 0, y: -2, z: 0}
   damping: 0.1
-  distanceCompliance: 0.1
+  distanceCompliance: 0.7
+  bendingCompliance: 0.7
   groundHeight: 0
   inputReader: {fileID: 11400000, guid: 3a7fba4ee5e71fc40a5c690d4d0e8b37, type: 2}
+  enableDebug: 0
 --- !u!4 &1050995946
 Transform:
   m_ObjectHideFlags: 0
