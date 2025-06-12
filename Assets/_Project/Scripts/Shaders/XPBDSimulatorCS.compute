@@ -1,21 +1,21 @@
 #pragma kernel PredictPositions
 #pragma kernel SolveDistances
 #pragma kernel UpdateState
-#pragma kernel ApplyDamping
+#pragma kernel SolveCollisions
 
 // --- Data Structures ---
 struct Particle
 {
-    float3 position;
-    float3 predictedPosition;
-    float3 velocity;
-    float inverseMass;
+    float4 position;
+    float4 predictedPosition;
+    float4 velocity;
 };
 
 struct DistanceConstraint
 {
     uint p1, p2;
     float restLength;
+    float padding; // Padding to ensure 16-byte alignment
 };
 
 // --- Buffers ---
@@ -24,15 +24,18 @@ StructuredBuffer<DistanceConstraint> constraints;
 RWStructuredBuffer<float> lagrangeMultipliers;
 
 // --- Uniforms ---
-int _ParticleCount;
-int _ConstraintCount;
+uint _ParticleCount;
+uint _ConstraintCount;
+uint _DistanceConstraintCount;
+float _SubstepDeltaTime;
 float _DeltaTime;
 float3 _Gravity;
 float _GroundHeight;
 float _Damping;
 float _DistanceCompliance;
 float _BendingCompliance;
-int _DistanceConstraintCount;
+float _Friction;
+
 
 // KERNEL 1: Predicts new positions based on velocity and gravity.
 [numthreads(64,1,1)]
@@ -43,16 +46,15 @@ void PredictPositions (uint3 id : SV_DispatchThreadID)
 
     Particle p = particles[i];
 
-    if (p.inverseMass > 0)
+    // Only apply gravity to dynamic particles
+    if (p.position.w > 0)
     {
-        p.velocity += _Gravity * _DeltaTime;
+        // Apply gravity to velocity (Semi-Implicit Euler)
+        p.velocity.xyz += _Gravity * _DeltaTime;
     }
-    p.predictedPosition = p.position + p.velocity * _DeltaTime;
     
-    if (p.predictedPosition.y < _GroundHeight)
-    {
-        p.predictedPosition.y = _GroundHeight;
-    }
+    p.predictedPosition.xyz = p.position.xyz + p.velocity.xyz * _DeltaTime;
+    
     particles[i] = p;
 }
 
@@ -67,34 +69,33 @@ void SolveDistances(uint3 id : SV_DispatchThreadID)
     Particle p1 = particles[c.p1];
     Particle p2 = particles[c.p2];
 
-    float w1 = p1.inverseMass;
-    float w2 = p2.inverseMass;
+    float w1 = p1.position.w;
+    float w2 = p2.position.w;
     float totalInverseMass = w1 + w2;
 
-    if (totalInverseMass == 0) return;
+    if (totalInverseMass < 0.00001f) return;
 
-    float3 n = p1.predictedPosition - p2.predictedPosition;
+    float3 n = p1.predictedPosition.xyz - p2.predictedPosition.xyz;
     float d = length(n);
-    if (d < 0.0001f) return;
+    if (d < 0.00001f) return;
     n /= d;
 
     float C = d - c.restLength;
 
-    float compliance = _DistanceCompliance;
-    if (i >= _DistanceConstraintCount) // Check if this is a bending constraint
-    {
-        compliance = _BendingCompliance;
-    }
+    float compliance = i < _DistanceConstraintCount ? _DistanceCompliance : _BendingCompliance;
+    
+    // XPBD calculations
+    float alpha_tilde = compliance / (_SubstepDeltaTime * _SubstepDeltaTime);
     
     float lambda = lagrangeMultipliers[i];
-    float alpha_tilde = compliance / (_DeltaTime * _DeltaTime);
     float delta_lambda = (-C - alpha_tilde * lambda) / (totalInverseMass + alpha_tilde);
 
-    p1.predictedPosition += w1 * delta_lambda * n;
-    p2.predictedPosition -= w2 * delta_lambda * n;
+    p1.predictedPosition.xyz += w1 * delta_lambda * n;
+    p2.predictedPosition.xyz -= w2 * delta_lambda * n;
 
     particles[c.p1] = p1;
     particles[c.p2] = p2;
+    
     lagrangeMultipliers[i] += delta_lambda;
 }
 
@@ -107,18 +108,49 @@ void UpdateState (uint3 id : SV_DispatchThreadID)
 
     Particle p = particles[i];
     
-    p.velocity = (p.predictedPosition - p.position) / _DeltaTime;
-    p.position = p.predictedPosition;
+    // Update velocity, applying damping
+    // The (1.0 - _Damping) is an approximation of exponential damping that works well here.
+    p.velocity.xyz = (p.predictedPosition.xyz - p.position.xyz) / _DeltaTime * (1.0 - _Damping);
+    
+    // Update final position
+    p.position.xyz = p.predictedPosition.xyz;
     
     particles[i] = p;
 }
 
-// KERNEL 4: Applies velocity damping once per frame.
+// KERNEL 4: Solves ground plane collision as an inequality constraint.
+// In your uniform declarations, make sure you still have _Friction
+// float _Friction;
+
+// KERNEL 4: A more robust collision solver
 [numthreads(64,1,1)]
-void ApplyDamping(uint3 id : SV_DispatchThreadID)
+void SolveCollisions(uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
     if (i >= _ParticleCount) return;
 
-    particles[i].velocity *= (1.0 - _Damping);
+    Particle p = particles[i];
+    
+    if (p.predictedPosition.y < _GroundHeight)
+    {
+        // Get the position from the start of the full timestep.
+        float3 pos_old = p.position.xyz;
+        
+        p.predictedPosition.y = _GroundHeight;
+
+        // --- Friction Calculation ---
+        float3 delta_p = p.predictedPosition.xyz - pos_old;
+        
+        float3 surface_normal = float3(0, 1, 0);
+        
+        float3 delta_p_perp = dot(delta_p, surface_normal) * surface_normal;
+
+        // Calculate the part of the movement that was tangential (along) the surface
+        float3 delta_p_tan = delta_p - delta_p_perp;
+        
+        // Apply friction by reducing the tangential movement.
+        p.predictedPosition.xyz -= delta_p_tan * min(1.0, _Friction);
+    }
+    
+    particles[i] = p;
 }

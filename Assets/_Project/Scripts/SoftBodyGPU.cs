@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Codex.Input;
+using SoftBody.Scripts;
 using SoftBody.Scripts.Models;
 using UnityEngine;
 
@@ -22,28 +23,51 @@ public class SoftBodyGPU : MonoBehaviour
     private static readonly int LagrangeMultipliers = Shader.PropertyToID("lagrangeMultipliers");
     private static readonly int DistanceConstraintCount = Shader.PropertyToID("_DistanceConstraintCount");
     private static readonly int BendingCompliance = Shader.PropertyToID("_BendingCompliance");
+    private static readonly int SubstepDeltaTime = Shader.PropertyToID("_SubstepDeltaTime");
+    private static readonly int Friction = Shader.PropertyToID("_Friction");
 
 
     // --- Inspector Fields ---
-    [Header("Compute Shader")] [SerializeField]
+    [Header("Compute Shader")] 
+    [SerializeField]
     private ComputeShader computeShader;
+    
+    [Header("Mesh Setup")]
+    [SerializeField]
+    private PrimitiveType meshType = PrimitiveType.FromMeshFilter;
+    [SerializeField]
+    [Tooltip("Size parameter used for procedural primitives.")]
+    private float primitiveSize = 1.0f;
 
     [Header("Simulation Parameters")] [Range(1, 200)]
-    public int substeps = 15;
-
-    [Range(1, 25)] public int solverIterations = 15; // Inner loop for stiffness
-    public Vector3 gravity = new(0, -9.81f, 0);
+    [SerializeField]
+    private int substeps = 15;
+    [SerializeField]
+    [Range(1, 25)] 
+    private int solverIterations = 15; // Inner loop for stiffness
+    [SerializeField]
+    private Vector3 gravity = new(0, -9.81f, 0);
     [Range(0, 1f)] public float damping = 0.05f;
 
     [Header("Constraints")] [Tooltip("Compliance of the distance constraints. Lower is stiffer.")]
-    public float distanceCompliance = 0f;
+    [SerializeField]
+    private float distanceCompliance = 0f;
 
     [Tooltip("Compliance of the bending constraints. Resists folding.")]
-    public float bendingCompliance = 0.05f;
+    [SerializeField]
+    private float bendingCompliance = 0.05f;
 
-    [Header("Collision")] public float groundHeight = 0.0f;
-    [Header("Debug")] [SerializeField] private InputReaderSO inputReader;
-    [SerializeField] private bool enableDebug = false; // Enable debug mode for additional logging
+    [Header("Collision")] 
+    [SerializeField]
+    private float groundHeight = 0.0f;
+    [SerializeField]
+    [Range(0, 1f)]
+    private float friction = 0.2f;
+    
+    [Header("Debug")] 
+    [SerializeField] private InputReaderSO inputReader;
+    [SerializeField] private bool enableDebug = false;
+    [SerializeField] private bool pinFirstParticle = false;
 
     // --- Private Member Variables ---
     private MeshFilter _meshFilter;
@@ -54,7 +78,7 @@ public class SoftBodyGPU : MonoBehaviour
     private List<DistanceConstraint> _distanceConstraints;
     private float[] _zeroData; // For clearing the Lagrange buffer
     private int _particleCount, _constraintCount;
-    private int _predictKernel, _solveDistancesKernel, _updateStateKernel, _dampingKernel;
+    private int _predictKernel, _solveDistancesKernel, _updateStateKernel, _solveCollisionsKernel;
     private Vector3[] _verticesForMeshUpdate;
     private Particle[] _initialParticleState;
     private int _numDistanceConstraints;
@@ -72,48 +96,72 @@ public class SoftBodyGPU : MonoBehaviour
     private void Awake()
     {
         _meshFilter = GetComponent<MeshFilter>();
+        
+        switch (meshType)
+        {
+            case PrimitiveType.Plane:
+                _meshFilter.mesh = MeshFactory.CreatePlane(primitiveSize);
+                break;
+            case PrimitiveType.Cube:
+                _meshFilter.mesh = MeshFactory.CreateCube(primitiveSize);
+                break;
+            case PrimitiveType.FromMeshFilter:
+                if (_meshFilter.mesh == null)
+                {
+                    Debug.LogError("MeshType is set to FromMeshFilter, but no mesh is assigned!", this);
+                }
+                break;
+        }
     }
 
     private void Start()
-{
-    WeldMeshVertices(out _simulationMesh, out _originalIndexMap);
-    
-    InitializeData();
-    
-    _verticesForMeshUpdate = new Vector3[_meshFilter.mesh.vertexCount];
-    for (var i = 0; i < _verticesForMeshUpdate.Length; i++)
     {
-        _verticesForMeshUpdate[i] = _simulationMesh.vertices[_originalIndexMap[i]];
-    }
-    _meshFilter.mesh.vertices = _verticesForMeshUpdate;
-    
-    _particleBuffer = new ComputeBuffer(_particleCount, Marshal.SizeOf(typeof(Particle)));
-    _particleBuffer.SetData(_particles);
+        WeldMeshVertices(out _simulationMesh, out _originalIndexMap);
 
-    // Constraint Buffer: Holds all distance and bending constraints combined.
-    _distanceConstraintBuffer = new ComputeBuffer(_constraintCount, Marshal.SizeOf(typeof(DistanceConstraint)));
-    _distanceConstraintBuffer.SetData(_distanceConstraints);
+        InitializeData();
+        
+        _initialParticleState = new Particle[_particleCount];
+        Array.Copy(_particles, _initialParticleState, _particleCount);
 
-    // Lagrange Buffer: Used by the XPBD solver. Needs to be cleared each frame.
-    _lagrangeBuffer = new ComputeBuffer(_constraintCount, sizeof(float));
-    _zeroData = new float[_constraintCount]; // Pre-allocate a zeroed array for fast clearing.
-    _lagrangeBuffer.SetData(_zeroData);
-    
-    _predictKernel = computeShader.FindKernel("PredictPositions");
-    _solveDistancesKernel = computeShader.FindKernel("SolveDistances");
-    _updateStateKernel = computeShader.FindKernel("UpdateState");
-    _dampingKernel = computeShader.FindKernel("ApplyDamping");
-    
-    // Predict Kernel
-    computeShader.SetBuffer(_predictKernel, Particles, _particleBuffer);
+        _verticesForMeshUpdate = new Vector3[_meshFilter.mesh.vertexCount];
+        for (var i = 0; i < _verticesForMeshUpdate.Length; i++)
+        {
+            _verticesForMeshUpdate[i] = _simulationMesh.vertices[_originalIndexMap[i]];
+        }
 
-    // Solver Kernel
-    computeShader.SetBuffer(_solveDistancesKernel, Particles, _particleBuffer);
-    computeShader.SetBuffer(_solveDistancesKernel, Constraints, _distanceConstraintBuffer);
-    computeShader.SetBuffer(_solveDistancesKernel, LagrangeMultipliers, _lagrangeBuffer);
-    
-    computeShader.SetBuffer(_updateStateKernel, Particles, _particleBuffer);
-    computeShader.SetBuffer(_dampingKernel, Particles, _particleBuffer);
+        _meshFilter.mesh.vertices = _verticesForMeshUpdate;
+
+        _particleBuffer = new ComputeBuffer(_particleCount, Marshal.SizeOf(typeof(Particle)));
+        _particleBuffer.SetData(_particles);
+
+        // Constraint Buffer: Holds all distance and bending constraints combined.
+        _distanceConstraintBuffer = new ComputeBuffer(_constraintCount, Marshal.SizeOf(typeof(DistanceConstraint)));
+        _distanceConstraintBuffer.SetData(_distanceConstraints);
+
+        // Lagrange Buffer: Used by the XPBD solver. Needs to be cleared each frame.
+        _lagrangeBuffer = new ComputeBuffer(_constraintCount, sizeof(float));
+        _zeroData = new float[_constraintCount]; // Pre-allocate a zeroed array for fast clearing.
+        _lagrangeBuffer.SetData(_zeroData);
+
+        _predictKernel = computeShader.FindKernel("PredictPositions");
+        _solveDistancesKernel = computeShader.FindKernel("SolveDistances");
+        _updateStateKernel = computeShader.FindKernel("UpdateState");
+        _solveCollisionsKernel = computeShader.FindKernel("SolveCollisions");
+
+        // Predict Kernel
+        computeShader.SetBuffer(_predictKernel, Particles, _particleBuffer);
+
+        // Solver Kernel
+        computeShader.SetBuffer(_solveDistancesKernel, Particles, _particleBuffer);
+        computeShader.SetBuffer(_solveDistancesKernel, Constraints, _distanceConstraintBuffer);
+        computeShader.SetBuffer(_solveDistancesKernel, LagrangeMultipliers, _lagrangeBuffer);
+        computeShader.SetBuffer(_solveCollisionsKernel, Particles, _particleBuffer);
+
+        computeShader.SetBuffer(_updateStateKernel, Particles, _particleBuffer);
+        
+        Debug.Log($"Particle Buffer: Size={_particleBuffer.count}, Stride={_particleBuffer.stride}");
+        Debug.Log($"Constraint Buffer: Size={_distanceConstraintBuffer.count}, Stride={_distanceConstraintBuffer.stride}");
+        Debug.Log($"Lagrange Buffer: Size={_lagrangeBuffer.count}, Stride={_lagrangeBuffer.stride}");
 
         if (enableDebug)
         {
@@ -135,7 +183,7 @@ public class SoftBodyGPU : MonoBehaviour
         }
     }
 
-    private void RestartSimulation()
+    public void RestartSimulation()
     {
         if (_initialParticleState == null || _particleBuffer == null)
         {
@@ -143,16 +191,22 @@ public class SoftBodyGPU : MonoBehaviour
             return;
         }
 
-        Debug.Log("Restarting simulation (Optimized)...");
+        _particleBuffer.SetData(_initialParticleState);
 
-        Array.Copy(_initialParticleState, _particles, _particleCount);
+        _lagrangeBuffer?.SetData(_zeroData);
 
-        _particleBuffer.SetData(_particles);
-
-        if (_lagrangeBuffer != null)
+        for (var i = 0; i < _verticesForMeshUpdate.Length; i++)
         {
-            _lagrangeBuffer.SetData(_zeroData);
+            var simulatedIndex = _originalIndexMap[i];
+            _verticesForMeshUpdate[i] = transform.InverseTransformPoint(_initialParticleState[simulatedIndex].position);
         }
+
+        _meshFilter.mesh.vertices = _verticesForMeshUpdate;
+        _meshFilter.mesh.RecalculateBounds();
+        _meshFilter.mesh.RecalculateNormals();
+        
+        Debug.Log("Simulation Restarted.");
+
     }
 
     private void FixedUpdate()
@@ -161,54 +215,56 @@ public class SoftBodyGPU : MonoBehaviour
     {
         return;
     }
-
-    // --- 2. CALCULATE CONSTANTS FOR THE FRAME ---
-
-    var substepDeltaTime = Time.fixedDeltaTime / substeps;
+    
+    var dt = Time.fixedDeltaTime;
+    var substepDt = dt / substeps;
     var particleThreadGroups = Mathf.CeilToInt(_particleCount / 64.0f);
     var constraintThreadGroups = Mathf.CeilToInt(_constraintCount / 64.0f);
-
-    // --- 3. SET UNIFORMS FOR THE COMPUTE SHADER ---
-    // These values are constant for all substeps in this frame.
+    
+    
     computeShader.SetInt(ParticleCount, _particleCount);
     computeShader.SetInt(ConstraintCount, _constraintCount);
     computeShader.SetInt(DistanceConstraintCount, _numDistanceConstraints);
-    computeShader.SetFloat(DeltaTime, substepDeltaTime);
+    computeShader.SetFloat(DeltaTime, dt); 
+    computeShader.SetFloat(SubstepDeltaTime, substepDt);
     computeShader.SetVector(Gravity, gravity);
     computeShader.SetFloat(GroundHeight, groundHeight);
     computeShader.SetFloat(Damping, damping);
     computeShader.SetFloat(DistanceCompliance, distanceCompliance);
     computeShader.SetFloat(BendingCompliance, bendingCompliance);
+    computeShader.SetFloat(Friction, friction); 
 
-    // --- 4. THE FULLY GPU-BASED SIMULATION LOOP ---
+    // --- 1. PREDICT POSITIONS ---
+    computeShader.Dispatch(_predictKernel, particleThreadGroups, 1, 1);
+    
+    // --- 2. SOLVE CONSTRAINTS (SUBSTEP LOOP) ---
     for (var i = 0; i < substeps; i++)
     {
-        // For XPBD, we reset the Lagrange multipliers before the solver runs.
+        // For XPBD, Lagrange multipliers are reset before the inner solver iterations.
         _lagrangeBuffer.SetData(_zeroData);
         
-        computeShader.Dispatch(_predictKernel, particleThreadGroups, 1, 1);
         for (var j = 0; j < solverIterations; j++)
         {
             computeShader.Dispatch(_solveDistancesKernel, constraintThreadGroups, 1, 1);
         }
-        computeShader.Dispatch(_updateStateKernel, particleThreadGroups, 1, 1);
+        
+        computeShader.Dispatch(_solveCollisionsKernel, particleThreadGroups, 1, 1);
     }
     
-    computeShader.Dispatch(_dampingKernel, particleThreadGroups, 1, 1);
+    // --- 3. UPDATE STATE ---
+    // This kernel now handles velocity update, damping, and final position update.
+    computeShader.Dispatch(_updateStateKernel, particleThreadGroups, 1, 1);
     
+    // --- 4. READ BACK DATA FOR VISUALS ---
     _particleBuffer.GetData(_particles);
     
     for (var i = 0; i < _verticesForMeshUpdate.Length; i++)
     {
         var simulatedIndex = _originalIndexMap[i];
-        
         _verticesForMeshUpdate[i] = transform.InverseTransformPoint(_particles[simulatedIndex].position);
     }
 
-    // Assign the entire modified vertex array back to the visual mesh. This is the correct way.
     _meshFilter.mesh.vertices = _verticesForMeshUpdate;
-
-    // Recalculate normals and bounds for correct lighting and culling.
     _meshFilter.mesh.RecalculateBounds();
     _meshFilter.mesh.RecalculateNormals();
 }
@@ -216,35 +272,48 @@ public class SoftBodyGPU : MonoBehaviour
     private void InitializeData()
     {
         var initialVertices = _simulationMesh.vertices; 
-        var triangles = _simulationMesh.triangles; 
+
         _particleCount = initialVertices.Length;
 
         _particles = new Particle[_particleCount];
         for (var i = 0; i < _particleCount; i++)
         {
             var worldPos = transform.TransformPoint(initialVertices[i]);
+            
+            var isPinned = i == 1 && pinFirstParticle; // Add logic for pinning
+            
+            var invMass = isPinned ? 0.0f : 1.0f;
+            
             _particles[i] = new Particle
             {
-                position = worldPos,
-                predictedPosition = worldPos,
-                velocity = Vector3.zero,
-                inverseMass = 1.0f
+                position =  new Vector4(worldPos.x, worldPos.y, worldPos.z, invMass), 
+                predictedPosition =  new Vector4(worldPos.x, worldPos.y, worldPos.z, invMass), 
+                velocity = Vector4.zero
             };
 
             if (enableDebug)
             {
                 Debug.Log(
-                    $"Initialized Particle {i}: Position = {_particles[i].position}, InverseMass = {_particles[i].inverseMass}");
+                    $"Initialized Particle {i}: Position = {_particles[i].position}, InverseMass = {_particles[i].position.w}");
             }
+        }
+        
+        var intTriangles = _simulationMesh.triangles;
+       
+        var triangles = new uint[intTriangles.Length];
+        for(var i = 0; i < intTriangles.Length; i++)
+        {
+            triangles[i] = (uint)intTriangles[i];
         }
 
         _distanceConstraints = new List<DistanceConstraint>();
         var bendingConstraints = new List<DistanceConstraint>();
 
-        var edgeToTrianglesMap = new Dictionary<Tuple<int, int>, List<int>>();
+        var edgeToTrianglesMap = new Dictionary<Tuple<uint, uint>, List<uint>>();
+        var addedEdges = new HashSet<Tuple<uint, uint>>();
 
         //Pass 1: Populate the edge map
-        for (var i = 0; i < triangles.Length; i += 3)
+        for (uint i = 0; i < triangles.Length; i += 3)
         {
             for (var j = 0; j < 3; j++)
             {
@@ -252,11 +321,11 @@ public class SoftBodyGPU : MonoBehaviour
                 var p2Idx = triangles[i + (j + 1) % 3];
 
                 // Sort indices to make the edge key unique
-                var edge = new Tuple<int, int>(Mathf.Min(p1Idx, p2Idx), Mathf.Max(p1Idx, p2Idx));
+                var edge = new Tuple<uint, uint>(Math.Min(p1Idx, p2Idx), Math.Max(p1Idx, p2Idx));
 
                 if (!edgeToTrianglesMap.ContainsKey(edge))
                 {
-                    edgeToTrianglesMap[edge] = new List<int>();
+                    edgeToTrianglesMap[edge] = new List<uint>();
                 }
 
                 // The value is the index of the first vertex of the triangle (i)
@@ -265,7 +334,6 @@ public class SoftBodyGPU : MonoBehaviour
         }
 
         // Pass 2: Generate all constraints
-        var addedEdges = new HashSet<Tuple<int, int>>();
         foreach (var (edge, tris) in edgeToTrianglesMap)
         {
             // Add the primary distance constraint for the edge
@@ -273,8 +341,11 @@ public class SoftBodyGPU : MonoBehaviour
             {
                 _distanceConstraints.Add(new DistanceConstraint
                 {
-                    p1 = edge.Item1, p2 = edge.Item2,
-                    restLength = Vector3.Distance(_particles[edge.Item1].position, _particles[edge.Item2].position)
+                    p1 = edge.Item1, 
+                    p2 = edge.Item2,
+                    restLength = Vector3.Distance(
+                        _particles[edge.Item1].position,
+                        _particles[edge.Item2].position)
                 });
             }
 
@@ -284,9 +355,10 @@ public class SoftBodyGPU : MonoBehaviour
                 // Find the two vertices that are NOT part of the shared edge
                 var tri1StartIdx = tris[0];
                 var tri2StartIdx = tris[1];
-                int p3 = -1, p4 = -1;
+                var p3 = uint.MaxValue;
+                var p4 = uint.MaxValue;
 
-                for (var i = 0; i < 3; i++)
+                for (uint i = 0; i < 3; i++)
                 {
                     var vIdx = triangles[tri1StartIdx + i];
                     if (vIdx != edge.Item1 && vIdx != edge.Item2)
@@ -296,7 +368,7 @@ public class SoftBodyGPU : MonoBehaviour
                     }
                 }
 
-                for (var i = 0; i < 3; i++)
+                for (uint i = 0; i < 3; i++)
                 {
                     var vIdx = triangles[tri2StartIdx + i];
                     if (vIdx != edge.Item1 && vIdx != edge.Item2)
@@ -307,11 +379,12 @@ public class SoftBodyGPU : MonoBehaviour
                 }
 
                 // If we found two valid outer vertices, create the constraint
-                if (p3 != -1 && p4 != -1)
+                if (p3 != uint.MaxValue && p4 != uint.MaxValue)
                 {
                     bendingConstraints.Add(new DistanceConstraint
                     {
-                        p1 = p3, p2 = p4,
+                        p1 = p3, 
+                        p2 = p4,
                         restLength = Vector3.Distance(_particles[p3].position, _particles[p4].position)
                     });
                 }
