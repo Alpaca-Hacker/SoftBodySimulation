@@ -1,14 +1,14 @@
 #pragma kernel PredictPositions
 #pragma kernel SolveDistances
-#pragma kernel UpdateState
 #pragma kernel SolveCollisions
+#pragma kernel FinalizeSubstep
 
 // --- Data Structures ---
 struct Particle
 {
-    float4 position;
-    float4 predictedPosition;
-    float4 velocity;
+    float4 position;          // Current position (xyz), inverseMass (w)
+    float4 predictedPosition; // "Next" position during solve
+    float4 old_position;      // Position from start of the frame (xyz)
 };
 
 struct DistanceConstraint
@@ -28,7 +28,6 @@ uint _ParticleCount;
 uint _ConstraintCount;
 uint _DistanceConstraintCount;
 float _SubstepDeltaTime;
-float _DeltaTime;
 float3 _Gravity;
 float _GroundHeight;
 float _Damping;
@@ -37,8 +36,8 @@ float _BendingCompliance;
 float _Friction;
 
 
-// KERNEL 1: Predicts new positions based on velocity and gravity.
-[numthreads(64,1,1)]
+// KERNEL 1: PredictPositions with damping and bounce logic
+[numthreads(8,1,1)]
 void PredictPositions (uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
@@ -46,20 +45,25 @@ void PredictPositions (uint3 id : SV_DispatchThreadID)
 
     Particle p = particles[i];
 
-    // Only apply gravity to dynamic particles
-    if (p.position.w > 0)
+    if (p.position.w > 0) // if dynamic
     {
-        // Apply gravity to velocity (Semi-Implicit Euler)
-        p.velocity.xyz += _Gravity * _DeltaTime;
+        // Velocity is calculated over the last substep (implicitly)
+        float3 velocity = p.position.xyz - p.old_position.xyz;
+
+        // Predict next position using the SUBSTEP delta time
+        p.predictedPosition.xyz = p.position.xyz + velocity * (1.0 - _Damping) + _Gravity * _SubstepDeltaTime * _SubstepDeltaTime;
     }
-    
-    p.predictedPosition.xyz = p.position.xyz + p.velocity.xyz * _DeltaTime;
+    else // if pinned
+    {
+        p.predictedPosition.xyz = p.position.xyz;
+    }
     
     particles[i] = p;
 }
 
+
 // KERNEL 2: Solves distance constraints using XPBD.
-[numthreads(64,1,1)]
+[numthreads(8,1,1)]
 void SolveDistances(uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
@@ -99,58 +103,45 @@ void SolveDistances(uint3 id : SV_DispatchThreadID)
     lagrangeMultipliers[i] += delta_lambda;
 }
 
-// KERNEL 3: Updates final positions and velocities.
-[numthreads(64,1,1)]
-void UpdateState (uint3 id : SV_DispatchThreadID)
-{
-    uint i = id.x;
-    if (i >= _ParticleCount) return;
 
-    Particle p = particles[i];
-    
-    // Update velocity, applying damping
-    // The (1.0 - _Damping) is an approximation of exponential damping that works well here.
-    p.velocity.xyz = (p.predictedPosition.xyz - p.position.xyz) / _DeltaTime * (1.0 - _Damping);
-    
-    // Update final position
-    p.position.xyz = p.predictedPosition.xyz;
-    
-    particles[i] = p;
-}
-
-// KERNEL 4: Solves ground plane collision as an inequality constraint.
-// In your uniform declarations, make sure you still have _Friction
-// float _Friction;
-
-// KERNEL 4: A more robust collision solver
-[numthreads(64,1,1)]
+// KERNEL 3: A robust collision solver
+[numthreads(8,1,1)]
 void SolveCollisions(uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
     if (i >= _ParticleCount) return;
 
     Particle p = particles[i];
-    
+
+    // Check for penetration
     if (p.predictedPosition.y < _GroundHeight)
     {
-        // Get the position from the start of the full timestep.
-        float3 pos_old = p.position.xyz;
-        
+        // Simple, clean projection. We will handle the "sticking" differently.
         p.predictedPosition.y = _GroundHeight;
-
-        // --- Friction Calculation ---
-        float3 delta_p = p.predictedPosition.xyz - pos_old;
-        
-        float3 surface_normal = float3(0, 1, 0);
-        
-        float3 delta_p_perp = dot(delta_p, surface_normal) * surface_normal;
-
-        // Calculate the part of the movement that was tangential (along) the surface
-        float3 delta_p_tan = delta_p - delta_p_perp;
-        
-        // Apply friction by reducing the tangential movement.
-        p.predictedPosition.xyz -= delta_p_tan * min(1.0, _Friction);
     }
     
     particles[i] = p;
 }
+
+// KERNEL 4: Updates final positions and velocities.
+[numthreads(8,1,1)]
+void FinalizeSubstep(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ParticleCount) return;
+
+    Particle p = particles[i];
+    
+    float inverseMass = p.position.w;
+    
+    p.old_position.xyz = p.position.xyz;
+
+    p.position.xyz = p.predictedPosition.xyz;
+    
+
+    p.position.w = inverseMass;
+    
+    particles[i] = p;
+}
+    
+

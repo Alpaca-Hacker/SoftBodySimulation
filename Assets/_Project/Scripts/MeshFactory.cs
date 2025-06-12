@@ -52,59 +52,57 @@ namespace SoftBody.Scripts
 
         public static Mesh CreateCube(float size = 1.0f)
         {
-            var mesh = new Mesh();
+            Mesh mesh = new Mesh();
             mesh.name = "Procedural Cube";
 
-            var halfSize = size / 2.0f;
+            float halfSize = size / 2.0f;
 
-            var vertices = new Vector3[]
+            // The 8 unique vertices of a cube
+            Vector3[] vertices = new Vector3[]
             {
-                // Bottom face
                 new Vector3(-halfSize, -halfSize, -halfSize), // 0
                 new Vector3(halfSize, -halfSize, -halfSize), // 1
                 new Vector3(halfSize, -halfSize, halfSize), // 2
                 new Vector3(-halfSize, -halfSize, halfSize), // 3
-
-                // Top face
                 new Vector3(-halfSize, halfSize, -halfSize), // 4
                 new Vector3(halfSize, halfSize, -halfSize), // 5
                 new Vector3(halfSize, halfSize, halfSize), // 6
                 new Vector3(-halfSize, halfSize, halfSize) // 7
             };
 
-            // This is a "welded" cube, meaning it only has 8 unique vertices.
-            // The normals won't look sharp like a standard Unity cube until you unweld it,
-            // but for a soft body simulation, this is exactly what we want.
-            var triangles = new int[]
+            // Triangles defined with a correct counter-clockwise (CCW) winding order
+            // when viewed from the outside.
+            int[] triangles = new int[]
             {
-                // Bottom face
-                0, 2, 1,
-                0, 3, 2,
+                // --- Corrected Winding Order ---
+                // Bottom face (-Y)
+                0, 1, 2, // Was 0, 2, 1
+                0, 2, 3, // Was 0, 3, 2
 
-                // Top face
-                4, 5, 6,
-                4, 6, 7,
+                // Top face (+Y)
+                4, 6, 5, // Was 4, 5, 6
+                4, 7, 6, // Was 4, 6, 7
 
-                // Front face
-                3, 7, 6,
-                3, 6, 2,
+                // Front face (+Z)
+                3, 2, 6, // Was 3, 6, 2
+                3, 6, 7, // Was 3, 7, 6
 
-                // Back face
-                0, 1, 5,
-                0, 5, 4,
+                // Back face (-Z)
+                0, 5, 1, // Was 0, 1, 5
+                0, 4, 5, // Was 0, 5, 4
 
-                // Left face
-                0, 4, 7,
-                0, 7, 3,
+                // Left face (-X)
+                0, 7, 4, // Was 0, 4, 7
+                0, 3, 7, // Was 0, 7, 3
 
-                // Right face
-                1, 2, 6,
-                1, 6, 5
+                // Right face (+X)
+                1, 6, 2, // Was 1, 2, 6
+                1, 5, 6 // Was 1, 6, 5
             };
 
             mesh.SetVertices(vertices);
             mesh.SetTriangles(triangles, 0);
-            mesh.RecalculateNormals();
+            mesh.RecalculateNormals(); // This will now calculate correct, outward-facing normals
             mesh.RecalculateBounds();
 
             return mesh;
