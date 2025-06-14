@@ -41,15 +41,15 @@ namespace SoftBody.Scripts
 
         private IEnumerator AnimateForce()
         {
-            float elapsed = 0f;
+            var elapsed = 0f;
 
             while (elapsed < animationDuration)
             {
                 elapsed += Time.deltaTime;
-                float t = elapsed / animationDuration;
-                float forceMultiplier = forceCurve.Evaluate(t);
+                var t = elapsed / animationDuration;
+                var forceMultiplier = forceCurve.Evaluate(t);
 
-                Vector3 force = forceDirection.normalized * maxForce * forceMultiplier;
+                var force = forceDirection.normalized * maxForce * forceMultiplier;
                 softBody.AddForce(force, transform.position, 2f);
 
                 yield return null;
@@ -60,8 +60,8 @@ namespace SoftBody.Scripts
         {
             while (enablePulsing)
             {
-                float pulseForce = Mathf.Sin(Time.time * pulseFrequency * Mathf.PI * 2) * pulseStrength;
-                Vector3 force = Vector3.up * pulseForce;
+                var pulseForce = Mathf.Sin(Time.time * pulseFrequency * Mathf.PI * 2) * pulseStrength;
+                var force = Vector3.up * pulseForce;
                 softBody.AddForce(force, transform.position, 1f);
 
                 yield return null;
@@ -75,18 +75,18 @@ namespace SoftBody.Scripts
 
         private IEnumerator SqueezeEffect(float intensity)
         {
-            Vector3 center = transform.position;
-            float duration = 1f;
-            float elapsed = 0f;
+            var center = transform.position;
+            var duration = 1f;
+            var elapsed = 0f;
 
             while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
-                float t = elapsed / duration;
-                float squeezeForce = Mathf.Sin(t * Mathf.PI) * intensity * 50f;
+                var t = elapsed / duration;
+                var squeezeForce = Mathf.Sin(t * Mathf.PI) * intensity * 50f;
 
                 // Apply inward force
-                Vector3 inwardForce = (center - transform.position).normalized * squeezeForce;
+                var inwardForce = (center - transform.position).normalized * squeezeForce;
                 softBody.AddForce(inwardForce, center, 3f);
 
                 yield return null;

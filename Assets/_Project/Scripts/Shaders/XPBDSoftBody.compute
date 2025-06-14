@@ -3,6 +3,9 @@
 #pragma kernel IntegrateParticles
 #pragma kernel SolveConstraints
 #pragma kernel UpdateMesh
+#pragma kernel DecayLambdas
+#pragma kernel ValidateColorGroups
+#pragma kernel ComputeDiagnostics
 
 struct Particle
 {
@@ -26,6 +29,7 @@ struct Constraint
 RWStructuredBuffer<Particle> particles;
 RWStructuredBuffer<Constraint> constraints;
 RWStructuredBuffer<float3> vertices;
+RWStructuredBuffer<float4> debugBuffer;
 
 // Parameters
 float deltaTime;
@@ -37,6 +41,7 @@ int constraintCount;
 float3 worldPosition;
 float floorY;
 int currentColorGroup;
+float lambdaDecay;
 
 // Thread group size
 #define THREAD_GROUP_SIZE 64
@@ -127,6 +132,7 @@ void IntegrateParticles(uint3 id : SV_DispatchThreadID)
     particles[index] = p;
 }
 
+// Modified SolveConstraints kernel with ground collision awareness
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
 void SolveConstraints(uint3 id : SV_DispatchThreadID)
 {
@@ -134,70 +140,80 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     if (index >= (uint)constraintCount) return;
     
     Constraint c = constraints[index];
-    
-    // CRITICAL: Only solve constraints in the current color group
     if (c.colorGroup != currentColorGroup) return;
     
     Particle pA = particles[c.particleA];
     Particle pB = particles[c.particleB];
     
-    // Calculate current constraint violation
+    // Check if particles are on the ground
+    bool aOnGround = (pA.position.y <= floorY + 0.001);
+    bool bOnGround = (pB.position.y <= floorY + 0.001);
+    
     float3 delta = pB.position - pA.position;
     float currentLength = SafeLength(delta);
     
-    // Avoid solving degenerate constraints
     if (currentLength < 1e-6) return;
     
     float3 direction = delta / currentLength;
     float constraintValue = currentLength - c.restLength;
     
-    // XPBD formulation with proper compliance
-    float alphaTilde = c.compliance / (deltaTime * deltaTime);
+    // Adjust compliance for ground contact
+    float effectiveCompliance = c.compliance;
+    if (aOnGround || bOnGround)
+    {
+        // Increase compliance (soften constraints) when in contact with ground
+        effectiveCompliance *= 10.0; // Experiment with this value
+    }
     
-    // Ensure alphaTilde is not too small (causes infinite stiffness)
+    float alphaTilde = effectiveCompliance / (deltaTime * deltaTime);
     alphaTilde = max(alphaTilde, 1e-6);
     
-    // Calculate constraint mass (w = inverse mass)
     float wA = pA.invMass;
     float wB = pB.invMass;
+    
+    // Modify mass for ground contact
+    if (aOnGround) wA *= 0.1; // Reduce mobility of grounded particles
+    if (bOnGround) wB *= 0.1;
+    
     float totalInvMass = wA + wB;
+    if (totalInvMass < 1e-6) return;
     
-    if (totalInvMass < 1e-6) return; // Both particles pinned
-    
-    // XPBD constraint solving equation - uses accumulated lambda
     float deltaLambda = (-constraintValue - alphaTilde * c.lambda) / 
                        (totalInvMass + alphaTilde);
     
-    // Clamp deltaLambda to prevent extreme corrections
-    deltaLambda = clamp(deltaLambda, -100.0, 100.0);
+    // Clamp more aggressively for ground contact
+    float clampValue = (aOnGround || bOnGround) ? 10.0 : 100.0;
+    deltaLambda = clamp(deltaLambda, -clampValue, clampValue);
     
-    // Update accumulated lambda
     c.lambda += deltaLambda;
     
-    // Apply position corrections based on inverse mass ratios
     float3 correction = deltaLambda * direction;
     
-    // Apply corrections proportional to inverse mass
+    // Apply corrections with ground constraint
     if (wA > 0.0)
     {
         float3 correctionA = correction * wA;
         pA.position -= correctionA;
+        
+        // Ensure particle doesn't go below ground
+        pA.position.y = max(pA.position.y, floorY);
     }
     
     if (wB > 0.0)
     {
         float3 correctionB = correction * wB;
         pB.position += correctionB;
+        
+        // Ensure particle doesn't go below ground
+        pB.position.y = max(pB.position.y, floorY);
     }
     
-    // Validate positions after correction
     pA.position = ValidatePosition(pA.position);
     pB.position = ValidatePosition(pB.position);
     
-    // Update particles and constraint
     particles[c.particleA] = pA;
     particles[c.particleB] = pB;
-    constraints[index] = c; // Save updated lambda back to buffer
+    constraints[index] = c;
 }
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
@@ -217,4 +233,76 @@ void UpdateMesh(uint3 id : SV_DispatchThreadID)
     
     // Convert world position to local position for mesh
     vertices[index] = position;
+}
+
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void DecayLambdas(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= (uint)constraintCount) return;
+    
+    constraints[index].lambda *= lambdaDecay;
+}
+
+[numthreads(1, 1, 1)]
+void ValidateColorGroups(uint3 id : SV_DispatchThreadID)
+{
+    // Run single-threaded validation
+    for (int i = 0; i < constraintCount; i++)
+    {
+        Constraint c1 = constraints[i];
+        for (int j = i + 1; j < constraintCount; j++)
+        {
+            Constraint c2 = constraints[j];
+            
+            // Check if constraints in same color group share particles
+            if (c1.colorGroup == c2.colorGroup)
+            {
+                if (c1.particleA == c2.particleA || c1.particleA == c2.particleB ||
+                    c1.particleB == c2.particleA || c1.particleB == c2.particleB)
+                {
+                    // RACE CONDITION DETECTED!
+                    // Log this error somehow (atomic counter, debug buffer, etc.)
+                }
+            }
+        }
+    }
+}
+
+[numthreads(1, 1, 1)]
+void ComputeDiagnostics(uint3 id : SV_DispatchThreadID)
+{
+    float maxVel = 0.0;
+    float maxError = 0.0;
+    float totalLambda = 0.0;
+    int groundCount = 0;
+    
+    // Check particle velocities and ground contact
+    for (uint i = 0; i < (uint)particleCount; i++)
+    {
+        Particle p = particles[i];
+        float vel = length(p.velocity);
+        maxVel = max(maxVel, vel);
+        
+        if (abs(p.position.y - floorY) < 0.01)
+        {
+            groundCount++;
+        }
+    }
+    
+    // Check constraint errors
+    for (uint j = 0; j < (uint)constraintCount; j++)
+    {
+        Constraint c = constraints[j];
+        Particle pA = particles[c.particleA];
+        Particle pB = particles[c.particleB];
+        
+        float3 delta = pB.position - pA.position;
+        float currentLength = length(delta);
+        float error = abs(currentLength - c.restLength);
+        maxError = max(maxError, error);
+        totalLambda += abs(c.lambda);
+    }
+    
+    debugBuffer[0] = float4(maxVel, maxError, totalLambda / constraintCount, groundCount);
 }

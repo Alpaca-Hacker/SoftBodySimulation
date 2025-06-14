@@ -52,13 +52,13 @@ namespace SoftBody.Scripts
 
         public static Mesh CreateCube(float size = 1.0f)
         {
-            Mesh mesh = new Mesh();
+            var mesh = new Mesh();
             mesh.name = "Procedural Cube";
 
-            float halfSize = size / 2.0f;
+            var halfSize = size / 2.0f;
 
             // The 8 unique vertices of a cube
-            Vector3[] vertices = new Vector3[]
+            var vertices = new Vector3[]
             {
                 new Vector3(-halfSize, -halfSize, -halfSize), // 0
                 new Vector3(halfSize, -halfSize, -halfSize), // 1
@@ -72,7 +72,7 @@ namespace SoftBody.Scripts
 
             // Triangles defined with a correct counter-clockwise (CCW) winding order
             // when viewed from the outside.
-            int[] triangles = new int[]
+            var triangles = new int[]
             {
                 // --- Corrected Winding Order ---
                 // Bottom face (-Y)

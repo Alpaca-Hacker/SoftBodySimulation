@@ -216,7 +216,7 @@ private void FixedUpdate()
     if (_particleBuffer == null) return;
 
     // We only need the substep delta time for the main loop.
-    float substepDt = Time.fixedDeltaTime / substeps;
+    var substepDt = Time.fixedDeltaTime / substeps;
     
     var particleThreadGroups = Mathf.CeilToInt(_particleCount / 8.0f);
     var constraintThreadGroups = Mathf.CeilToInt(_constraintCount / 8.0f);
@@ -374,10 +374,10 @@ private void FixedUpdate()
         var oldToNewMap = new Dictionary<int, int>();
         mapToOriginal = new int[originalVertices.Length];
 
-        for (int i = 0; i < originalVertices.Length; i++)
+        for (var i = 0; i < originalVertices.Length; i++)
         {
-            bool found = false;
-            for (int j = 0; j < newVertices.Count; j++)
+            var found = false;
+            for (var j = 0; j < newVertices.Count; j++)
             {
                 if (Vector3.Distance(newVertices[j], originalVertices[i]) < 0.0001f)
                 {
@@ -391,16 +391,16 @@ private void FixedUpdate()
             if (!found)
             {
                 newVertices.Add(originalVertices[i]);
-                int newIndex = newVertices.Count - 1;
+                var newIndex = newVertices.Count - 1;
                 oldToNewMap[i] = newIndex;
                 mapToOriginal[i] = newIndex;
             }
         }
         
         var newTriangles = new int[originalMesh.triangles.Length];
-        for (int i = 0; i < originalMesh.triangles.Length; i++)
+        for (var i = 0; i < originalMesh.triangles.Length; i++)
         {
-            int oldIndex = originalMesh.triangles[i];
+            var oldIndex = originalMesh.triangles[i];
             newTriangles[i] = oldToNewMap[oldIndex];
         }
 

@@ -45,14 +45,14 @@ namespace SoftBody.Scripts
     private void UpdateParticlePositions()
     {
         // Get current mesh vertices (which represent particle positions)
-        Mesh mesh = softBody.GetComponent<MeshFilter>().mesh;
+        var mesh = softBody.GetComponent<MeshFilter>().mesh;
         if (mesh != null)
         {
-            Vector3[] vertices = mesh.vertices;
+            var vertices = mesh.vertices;
             currentParticlePositions = new Vector3[vertices.Length];
             
             // Convert from local to world space
-            for (int i = 0; i < vertices.Length; i++)
+            for (var i = 0; i < vertices.Length; i++)
             {
                 currentParticlePositions[i] = transform.TransformPoint(vertices[i]);
             }
@@ -66,7 +66,7 @@ namespace SoftBody.Scripts
         if (showParticles)
         {
             Gizmos.color = particleColor;
-            foreach (Vector3 pos in currentParticlePositions)
+            foreach (var pos in currentParticlePositions)
             {
                 Gizmos.DrawWireSphere(pos, particleSize);
             }
@@ -75,36 +75,36 @@ namespace SoftBody.Scripts
         if (showConstraints && currentParticlePositions.Length > 0)
         {
             Gizmos.color = constraintColor;
-            int res = Mathf.RoundToInt(Mathf.Pow(currentParticlePositions.Length, 1f/3f));
+            var res = Mathf.RoundToInt(Mathf.Pow(currentParticlePositions.Length, 1f/3f));
             
             // Draw constraint lines (simplified grid connections)
-            for (int x = 0; x < res; x++)
+            for (var x = 0; x < res; x++)
             {
-                for (int y = 0; y < res; y++)
+                for (var y = 0; y < res; y++)
                 {
-                    for (int z = 0; z < res; z++)
+                    for (var z = 0; z < res; z++)
                     {
-                        int index = x * res * res + y * res + z;
+                        var index = x * res * res + y * res + z;
                         if (index >= currentParticlePositions.Length) continue;
                         
-                        Vector3 pos = currentParticlePositions[index];
+                        var pos = currentParticlePositions[index];
                         
                         // Draw connections to adjacent particles
                         if (x < res - 1)
                         {
-                            int nextIndex = (x + 1) * res * res + y * res + z;
+                            var nextIndex = (x + 1) * res * res + y * res + z;
                             if (nextIndex < currentParticlePositions.Length)
                                 Gizmos.DrawLine(pos, currentParticlePositions[nextIndex]);
                         }
                         if (y < res - 1)
                         {
-                            int nextIndex = x * res * res + (y + 1) * res + z;
+                            var nextIndex = x * res * res + (y + 1) * res + z;
                             if (nextIndex < currentParticlePositions.Length)
                                 Gizmos.DrawLine(pos, currentParticlePositions[nextIndex]);
                         }
                         if (z < res - 1)
                         {
-                            int nextIndex = x * res * res + y * res + (z + 1);
+                            var nextIndex = x * res * res + y * res + (z + 1);
                             if (nextIndex < currentParticlePositions.Length)
                                 Gizmos.DrawLine(pos, currentParticlePositions[nextIndex]);
                         }
@@ -123,8 +123,8 @@ namespace SoftBody.Scripts
         
         if (frameCount > 0)
         {
-            float avgFrameTime = frameTime / frameCount;
-            float fps = 1f / avgFrameTime;
+            var avgFrameTime = frameTime / frameCount;
+            var fps = 1f / avgFrameTime;
             GUILayout.Label($"FPS: {fps:F1}");
             GUILayout.Label($"Frame Time: {avgFrameTime * 1000:F2}ms");
         }

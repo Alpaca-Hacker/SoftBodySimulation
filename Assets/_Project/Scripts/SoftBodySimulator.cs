@@ -32,6 +32,7 @@ namespace SoftBody.Scripts
         private ComputeBuffer constraintBuffer;
         private ComputeBuffer vertexBuffer;
         private ComputeBuffer indexBuffer;
+        private ComputeBuffer debugBuffer;
 
         private Mesh mesh;
         private List<Particle> particles;
@@ -41,6 +42,8 @@ namespace SoftBody.Scripts
         private int kernelIntegrate;
         private int kernelSolveConstraints;
         private int kernelUpdateMesh;
+        private int kernelDecayLambdas;
+        private int kernelComputeDiagnostics;
 
         private void Start()
         {
@@ -72,9 +75,11 @@ namespace SoftBody.Scripts
             kernelIntegrate = computeShader.FindKernel("IntegrateParticles");
             kernelSolveConstraints = computeShader.FindKernel("SolveConstraints");
             kernelUpdateMesh = computeShader.FindKernel("UpdateMesh");
+            kernelDecayLambdas = computeShader.FindKernel("DecayLambdas");
+            kernelComputeDiagnostics = computeShader.FindKernel("ComputeDiagnostics");
 
             // Verify all kernels were found
-            if (kernelIntegrate == -1 || kernelSolveConstraints == -1 || kernelUpdateMesh == -1)
+            if (kernelIntegrate == -1 || kernelSolveConstraints == -1 || kernelUpdateMesh == -1 || kernelDecayLambdas == -1)
             {
                 Debug.LogError(
                     "Could not find required compute shader kernels! Make sure the compute shader has IntegrateParticles, SolveConstraints, and UpdateMesh kernels.");
@@ -91,27 +96,27 @@ namespace SoftBody.Scripts
             constraints = new List<Constraint>();
             indices = new List<int>();
 
-            int res = settings.resolution;
-            Vector3 spacing = new Vector3(
+            var res = settings.resolution;
+            var spacing = new Vector3(
                 settings.size.x / (res - 1),
                 settings.size.y / (res - 1),
                 settings.size.z / (res - 1)
             );
 
             // Generate particles in a 3D grid
-            for (int x = 0; x < res; x++)
+            for (var x = 0; x < res; x++)
             {
-                for (int y = 0; y < res; y++)
+                for (var y = 0; y < res; y++)
                 {
-                    for (int z = 0; z < res; z++)
+                    for (var z = 0; z < res; z++)
                     {
-                        Vector3 pos = new Vector3(
+                        var pos = new Vector3(
                             x * spacing.x - settings.size.x * 0.5f,
                             y * spacing.y - settings.size.y * 0.5f,
                             z * spacing.z - settings.size.z * 0.5f
                         );
 
-                        Particle particle = new Particle
+                        var particle = new Particle
                         {
                             position = transform.TransformPoint(pos),
                             velocity = Vector3.zero,
@@ -123,55 +128,95 @@ namespace SoftBody.Scripts
                     }
                 }
             }
-
-            // Generate constraints (springs between adjacent particles)
-            for (int x = 0; x < res; x++)
-            {
-                for (int y = 0; y < res; y++)
-                {
-                    for (int z = 0; z < res; z++)
-                    {
-                        int index = x * res * res + y * res + z;
-
-                        // Connect to adjacent particles
-                        if (x < res - 1) AddConstraint(index, (x + 1) * res * res + y * res + z);
-                        if (y < res - 1) AddConstraint(index, x * res * res + (y + 1) * res + z);
-                        if (z < res - 1) AddConstraint(index, x * res * res + y * res + (z + 1));
-
-                        // Diagonal constraints for stability
-                        if (x < res - 1 && y < res - 1)
-                            AddConstraint(index, (x + 1) * res * res + (y + 1) * res + z);
-                        if (x < res - 1 && z < res - 1)
-                            AddConstraint(index, (x + 1) * res * res + y * res + (z + 1));
-                        if (y < res - 1 && z < res - 1)
-                            AddConstraint(index, x * res * res + (y + 1) * res + (z + 1));
-                    }
-                }
-            }
-
-            // CRITICAL: Apply graph coloring to prevent race conditions
+            
+            AddDistanceConstraints();
+            
+            AddVolumeConstraints();
+            
             ApplyGraphColoring();
 
             GenerateMeshTopology();
         }
+
+        private void AddDistanceConstraints()
+        {
+            var resolution = settings.resolution;
+            for (var x = 0; x < resolution; x++)
+            {
+                for (var y = 0; y < resolution; y++)
+                {
+                    for (var z = 0; z < resolution; z++)
+                    {
+                        var index = x * resolution * resolution + y * resolution + z;
+
+                        // Connect to adjacent particles
+                        if (x < resolution - 1)
+                            AddConstraint(index, (x + 1) * resolution * resolution + y * resolution + z);
+                        if (y < resolution - 1)
+                            AddConstraint(index, x * resolution * resolution + (y + 1) * resolution + z);
+                        if (z < resolution - 1)
+                            AddConstraint(index, x * resolution * resolution + y * resolution + (z + 1));
+
+                        // Diagonal constraints for stability
+                        if (x < resolution - 1 && y < resolution - 1)
+                            AddConstraint(index, (x + 1) * resolution * resolution + (y + 1) * resolution + z);
+                        if (x < resolution - 1 && z < resolution - 1)
+                            AddConstraint(index, (x + 1) * resolution * resolution + y * resolution + (z + 1));
+                        if (y < resolution - 1 && z < resolution - 1)
+                            AddConstraint(index, x * resolution * resolution + (y + 1) * resolution + (z + 1));
+                    }
+                }
+            }
+            Debug.Log($"Added distance constraints. Constraints: {constraints.Count}");
+        }
+        
+        private void AddVolumeConstraints()
+            {
+                // Add long-range constraints across diagonals
+                var res = settings.resolution;
+
+                for (var x = 0; x < res - 1; x++)
+                {
+                    for (var y = 0; y < res - 1; y++)
+                    {
+                        for (var z = 0; z < res - 1; z++)
+                        {
+                            // Add cube diagonal constraints
+                            var i000 = x * res * res + y * res + z;
+                            var i111 = (x + 1) * res * res + (y + 1) * res + (z + 1);
+                            AddConstraint(i000, i111);
+
+                            // Add face diagonals
+                            var i001 = x * res * res + y * res + (z + 1);
+                            var i110 = (x + 1) * res * res + (y + 1) * res + z;
+                            AddConstraint(i001, i110);
+                        }
+                    }
+                }
+
+                Debug.Log($"Added volume preservation constraints. Total constraints: {constraints.Count}");
+            }
+        
+        
+        
 
         private void ApplyGraphColoring()
         {
             Debug.Log($"Applying graph coloring to {constraints.Count} constraints...");
 
             // Simple greedy graph coloring algorithm
-            List<Constraint> coloredConstraints = new List<Constraint>();
+            var coloredConstraints = new List<Constraint>();
 
-            for (int i = 0; i < constraints.Count; i++)
+            for (var i = 0; i < constraints.Count; i++)
             {
-                Constraint constraint = constraints[i];
+                var constraint = constraints[i];
 
                 // Find which colors are already used by constraints sharing particles
-                HashSet<int> usedColors = new HashSet<int>();
+                var usedColors = new HashSet<int>();
 
-                for (int j = 0; j < coloredConstraints.Count; j++)
+                for (var j = 0; j < coloredConstraints.Count; j++)
                 {
-                    Constraint other = coloredConstraints[j];
+                    var other = coloredConstraints[j];
 
                     // Check if constraints share particles
                     if (constraint.particleA == other.particleA || constraint.particleA == other.particleB ||
@@ -182,7 +227,7 @@ namespace SoftBody.Scripts
                 }
 
                 // Assign the smallest available color
-                int color = 0;
+                var color = 0;
                 while (usedColors.Contains(color))
                 {
                     color++;
@@ -196,7 +241,7 @@ namespace SoftBody.Scripts
             constraints = coloredConstraints;
 
             // Count colors used
-            int maxColor = 0;
+            var maxColor = 0;
             foreach (var constraint in constraints)
             {
                 maxColor = Mathf.Max(maxColor, constraint.colorGroup);
@@ -207,9 +252,9 @@ namespace SoftBody.Scripts
 
         private void AddConstraint(int a, int b)
         {
-            float restLength = Vector3.Distance(particles[a].position, particles[b].position);
+            var restLength = Vector3.Distance(particles[a].position, particles[b].position);
 
-            Constraint constraint = new Constraint
+            var constraint = new Constraint
             {
                 particleA = a,
                 particleB = b,
@@ -225,14 +270,14 @@ namespace SoftBody.Scripts
         private void GenerateMeshTopology()
         {
             indices.Clear();
-            int res = settings.resolution;
+            var res = settings.resolution;
 
             // Generate surface triangles (simplified cube faces)
-            for (int x = 0; x < res - 1; x++)
+            for (var x = 0; x < res - 1; x++)
             {
-                for (int y = 0; y < res - 1; y++)
+                for (var y = 0; y < res - 1; y++)
                 {
-                    for (int z = 0; z < res - 1; z++)
+                    for (var z = 0; z < res - 1; z++)
                     {
                         // Only render surface faces
                         if (x == 0 || x == res - 2 || y == 0 || y == res - 2 || z == 0 || z == res - 2)
@@ -246,14 +291,14 @@ namespace SoftBody.Scripts
 
         private void AddCubeFace(int x, int y, int z, int res)
         {
-            int i000 = x * res * res + y * res + z;
-            int i001 = x * res * res + y * res + (z + 1);
-            int i010 = x * res * res + (y + 1) * res + z;
-            int i011 = x * res * res + (y + 1) * res + (z + 1);
-            int i100 = (x + 1) * res * res + y * res + z;
-            int i101 = (x + 1) * res * res + y * res + (z + 1);
-            int i110 = (x + 1) * res * res + (y + 1) * res + z;
-            int i111 = (x + 1) * res * res + (y + 1) * res + (z + 1);
+            var i000 = x * res * res + y * res + z;
+            var i001 = x * res * res + y * res + (z + 1);
+            var i010 = x * res * res + (y + 1) * res + z;
+            var i011 = x * res * res + (y + 1) * res + (z + 1);
+            var i100 = (x + 1) * res * res + y * res + z;
+            var i101 = (x + 1) * res * res + y * res + (z + 1);
+            var i110 = (x + 1) * res * res + (y + 1) * res + z;
+            var i111 = (x + 1) * res * res + (y + 1) * res + (z + 1);
 
             // Add triangles for visible faces
             if (x == 0) AddQuad(i000, i010, i011, i001); // Left face
@@ -280,12 +325,11 @@ namespace SoftBody.Scripts
         private void SetupBuffers()
         {
             // Create compute buffers
-            particleBuffer =
-                new ComputeBuffer(particles.Count, System.Runtime.InteropServices.Marshal.SizeOf<Particle>());
-            constraintBuffer = new ComputeBuffer(constraints.Count,
-                System.Runtime.InteropServices.Marshal.SizeOf<Constraint>());
+            particleBuffer = new ComputeBuffer(particles.Count, System.Runtime.InteropServices.Marshal.SizeOf<Particle>());
+            constraintBuffer = new ComputeBuffer(constraints.Count, System.Runtime.InteropServices.Marshal.SizeOf<Constraint>());
             vertexBuffer = new ComputeBuffer(particles.Count, sizeof(float) * 3);
             indexBuffer = new ComputeBuffer(indices.Count, sizeof(int));
+            debugBuffer = new ComputeBuffer(1, sizeof(float) * 4);
 
             // Upload initial data
             particleBuffer.SetData(particles);
@@ -296,8 +340,8 @@ namespace SoftBody.Scripts
             mesh = new Mesh();
             mesh.name = "SoftBody";
 
-            Vector3[] vertices = new Vector3[particles.Count];
-            for (int i = 0; i < particles.Count; i++)
+            var vertices = new Vector3[particles.Count];
+            for (var i = 0; i < particles.Count; i++)
             {
                 vertices[i] = transform.InverseTransformPoint(particles[i].position);
             }
@@ -308,7 +352,7 @@ namespace SoftBody.Scripts
             mesh.RecalculateBounds();
 
             // Ensure MeshFilter exists and assign mesh
-            MeshFilter meshFilter = GetComponent<MeshFilter>();
+            var meshFilter = GetComponent<MeshFilter>();
             if (meshFilter == null)
             {
                 meshFilter = gameObject.AddComponent<MeshFilter>();
@@ -323,7 +367,7 @@ namespace SoftBody.Scripts
 
         private void SetupRenderMaterial()
         {
-            MeshRenderer meshRenderer = GetComponent<MeshRenderer>();
+            var meshRenderer = GetComponent<MeshRenderer>();
             if (meshRenderer == null)
             {
                 meshRenderer = gameObject.AddComponent<MeshRenderer>();
@@ -360,18 +404,18 @@ namespace SoftBody.Scripts
             }
 
             // Use small timesteps for stability (key XPBD principle)
-            float targetDeltaTime = 1f / 120f; // 120 Hz physics
-            float frameTime = Time.deltaTime;
+            var targetDeltaTime = 1f / 120f; // 120 Hz physics
+            var frameTime = Time.deltaTime;
 
             // Subdivide large frames into small steps
-            int substeps = Mathf.CeilToInt(frameTime / targetDeltaTime);
+            var substeps = Mathf.CeilToInt(frameTime / targetDeltaTime);
             substeps = Mathf.Clamp(substeps, 1, 4); // Max 4 substeps per frame
 
-            float substepDeltaTime = frameTime / substeps;
+            var substepDeltaTime = frameTime / substeps;
 
-            for (int step = 0; step < substeps; step++)
+            for (var step = 0; step < substeps; step++)
             {
-                bool isLastSubstep = (step == substeps - 1);
+                var isLastSubstep = (step == substeps - 1);
                 SimulateSubstep(substepDeltaTime, isLastSubstep);
             }
 
@@ -381,7 +425,7 @@ namespace SoftBody.Scripts
 
         private void SimulateSubstep(float deltaTime, bool isLastSubstep)
         {
-            float floorY = FindFloorLevel();
+            var floorY = FindFloorLevel();
 
             // Set compute shader parameters
             computeShader.SetFloat("deltaTime", deltaTime);
@@ -392,6 +436,8 @@ namespace SoftBody.Scripts
             computeShader.SetVector("worldPosition", transform.position);
             computeShader.SetInt("particleCount", particles.Count);
             computeShader.SetInt("constraintCount", constraints.Count);
+            computeShader.SetFloat("lambdaDecay", 0.95f);
+
 
             // Bind buffers to all kernels
             computeShader.SetBuffer(kernelIntegrate, "particles", particleBuffer);
@@ -399,25 +445,32 @@ namespace SoftBody.Scripts
             computeShader.SetBuffer(kernelSolveConstraints, "constraints", constraintBuffer);
             computeShader.SetBuffer(kernelUpdateMesh, "particles", particleBuffer);
             computeShader.SetBuffer(kernelUpdateMesh, "vertices", vertexBuffer);
+            computeShader.SetBuffer(kernelDecayLambdas, "constraints", constraintBuffer);
+            computeShader.SetBuffer(kernelComputeDiagnostics, "particles", particleBuffer);
+            computeShader.SetBuffer(kernelComputeDiagnostics, "constraints", constraintBuffer);
+            computeShader.SetBuffer(kernelComputeDiagnostics, "debugBuffer", debugBuffer);
+         
 
             // Integrate particles
-            int threadGroups = Mathf.CeilToInt(particles.Count / 64f);
+            var threadGroups = Mathf.CeilToInt(particles.Count / 64f);
+            
             if (threadGroups > 0)
             {
+                computeShader.Dispatch(kernelDecayLambdas, threadGroups, 1, 1);
                 computeShader.Dispatch(kernelIntegrate, threadGroups, 1, 1);
             }
 
-            // CRITICAL: Solve constraints by color groups to prevent race conditions
-            int maxColorGroup = GetMaxColorGroup();
+            // Solve constraints by color groups to prevent race conditions
+            var maxColorGroup = GetMaxColorGroup();
 
             if (Time.frameCount % 60 == 0)
             {
-                Debug.Log($"Solving {maxColorGroup + 1} color groups with compliance={settings.compliance}");
+                Debug.Log($"Solving {maxColorGroup + 1} colour groups with compliance={settings.compliance}");
             }
 
-            for (int colorGroup = 0; colorGroup <= maxColorGroup; colorGroup++)
+            for (var colorGroup = 0; colorGroup <= maxColorGroup; colorGroup++)
             {
-                // Set current color group - THIS WAS MISSING
+                // Set current color group
                 computeShader.SetInt("currentColorGroup", colorGroup);
 
                 threadGroups = Mathf.CeilToInt(constraints.Count / 64f);
@@ -436,11 +489,21 @@ namespace SoftBody.Scripts
                     computeShader.Dispatch(kernelUpdateMesh, threadGroups, 1, 1);
                 }
             }
+            
+            computeShader.Dispatch(kernelComputeDiagnostics, 1, 1, 1);
+            
+            if (Time.frameCount % 30 == 0)
+            {
+                var debugData = new float[4];
+                debugBuffer.GetData(debugData);
+                Debug.Log($"Diagnostics - MaxVel: {debugData[0]:F3}, MaxError: {debugData[1]:F3}, " +
+                          $"AvgLambda: {debugData[2]:F3}, GroundParticles: {debugData[3]}");
+            }
         }
 
         private int GetMaxColorGroup()
         {
-            int maxColor = 0;
+            var maxColor = 0;
             foreach (var constraint in constraints)
             {
                 maxColor = Mathf.Max(maxColor, constraint.colorGroup);
@@ -452,8 +515,8 @@ namespace SoftBody.Scripts
         // CPU fallback for testing and debugging
         private void UpdateCPU()
         {
-            float deltaTime = Mathf.Min(Time.deltaTime, 0.02f);
-            float floorY = FindFloorLevel();
+            var deltaTime = Mathf.Min(Time.deltaTime, 0.02f);
+            var floorY = FindFloorLevel();
 
             // Debug first particle before physics
             if (Time.frameCount % 30 == 0)
@@ -464,18 +527,18 @@ namespace SoftBody.Scripts
             }
 
             // Integrate particles on CPU
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
-                Particle p = particles[i];
+                var p = particles[i];
 
                 if (p.invMass <= 0) continue; // Skip pinned particles
 
                 // Apply gravity force
-                Vector3 gravityForce = Vector3.down * settings.gravity;
+                var gravityForce = Vector3.down * settings.gravity;
                 p.force += gravityForce;
 
                 // Simple physics integration
-                Vector3 acceleration = p.force * p.invMass;
+                var acceleration = p.force * p.invMass;
                 p.velocity += acceleration * deltaTime;
 
                 // Apply damping
@@ -504,29 +567,29 @@ namespace SoftBody.Scripts
             }
 
             // Simple constraint solving (distance constraints)
-            for (int iter = 0; iter < settings.solverIterations; iter++)
+            for (var iter = 0; iter < settings.solverIterations; iter++)
             {
-                for (int i = 0; i < constraints.Count; i++)
+                for (var i = 0; i < constraints.Count; i++)
                 {
                     var constraint = constraints[i];
-                    Particle pA = particles[constraint.particleA];
-                    Particle pB = particles[constraint.particleB];
+                    var pA = particles[constraint.particleA];
+                    var pB = particles[constraint.particleB];
 
-                    Vector3 delta = pB.position - pA.position;
-                    float currentLength = delta.magnitude;
+                    var delta = pB.position - pA.position;
+                    var currentLength = delta.magnitude;
 
                     if (currentLength > 0.001f) // Avoid division by zero
                     {
-                        Vector3 direction = delta / currentLength;
-                        float violation = currentLength - constraint.restLength;
+                        var direction = delta / currentLength;
+                        var violation = currentLength - constraint.restLength;
 
-                        float totalInvMass = pA.invMass + pB.invMass;
+                        var totalInvMass = pA.invMass + pB.invMass;
                         if (totalInvMass > 0)
                         {
-                            float constraintMass = 1f / totalInvMass;
-                            float lambda = -violation * constraintMass * settings.stiffness * 0.01f;
+                            var constraintMass = 1f / totalInvMass;
+                            var lambda = -violation * constraintMass * settings.stiffness * 0.01f;
 
-                            Vector3 correction = lambda * direction;
+                            var correction = lambda * direction;
 
                             if (pA.invMass > 0)
                             {
@@ -544,12 +607,12 @@ namespace SoftBody.Scripts
                 }
             }
 
-            // Update mesh directly - CRITICAL: Don't use transform space conversion yet
-            Vector3[] vertices = new Vector3[particles.Count];
-            Vector3 centerOffset = Vector3.zero;
+            // Update mesh directly
+            var vertices = new Vector3[particles.Count];
+            var centerOffset = Vector3.zero;
 
             // Calculate center of mass for proper positioning
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
                 centerOffset += particles[i].position;
             }
@@ -560,7 +623,7 @@ namespace SoftBody.Scripts
             transform.position = centerOffset;
 
             // Convert particle world positions to local mesh coordinates
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
                 vertices[i] = particles[i].position - centerOffset;
             }
@@ -637,14 +700,14 @@ namespace SoftBody.Scripts
 
         private void ProcessVertexData(Unity.Collections.NativeArray<float> vertexData)
         {
-            Vector3[] vertices = new Vector3[particles.Count];
-            Vector3 centerOffset = Vector3.zero;
-            Vector3[] worldPositions = new Vector3[particles.Count];
+            var vertices = new Vector3[particles.Count];
+            var centerOffset = Vector3.zero;
+            var worldPositions = new Vector3[particles.Count];
 
             // First pass: read positions and check validity
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
-                Vector3 worldPos = new Vector3(
+                var worldPos = new Vector3(
                     vertexData[i * 3],
                     vertexData[i * 3 + 1],
                     vertexData[i * 3 + 2]
@@ -670,7 +733,7 @@ namespace SoftBody.Scripts
             transform.position = centerOffset;
 
             // Convert to local coordinates
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
                 vertices[i] = worldPositions[i] - centerOffset;
             }
@@ -693,9 +756,9 @@ namespace SoftBody.Scripts
         private void ResetToInitialPositions()
         {
             // Reset particles to initial positions
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
-                Particle p = particles[i];
+                var p = particles[i];
                 p.velocity = Vector3.zero;
                 p.force = Vector3.zero;
                 // Keep original position but reset physics state
@@ -732,13 +795,13 @@ namespace SoftBody.Scripts
         public void AddForce(Vector3 force, Vector3 position, float radius = 1f)
         {
             // Add external force to particles within radius
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
-                float distance = Vector3.Distance(particles[i].position, position);
+                var distance = Vector3.Distance(particles[i].position, position);
                 if (distance < radius)
                 {
-                    float falloff = 1f - (distance / radius);
-                    Particle p = particles[i];
+                    var falloff = 1f - (distance / radius);
+                    var p = particles[i];
                     p.force += force * falloff;
                     particles[i] = p;
                 }
@@ -751,12 +814,12 @@ namespace SoftBody.Scripts
         public void SetPinned(Vector3 position, float radius = 0.5f, bool pinned = true)
         {
             // Pin/unpin particles within radius
-            for (int i = 0; i < particles.Count; i++)
+            for (var i = 0; i < particles.Count; i++)
             {
-                float distance = Vector3.Distance(particles[i].position, position);
+                var distance = Vector3.Distance(particles[i].position, position);
                 if (distance < radius)
                 {
-                    Particle p = particles[i];
+                    var p = particles[i];
                     p.invMass = pinned ? 0f : 1f / settings.mass;
                     particles[i] = p;
                 }
@@ -780,7 +843,7 @@ namespace SoftBody.Scripts
             {
                 // Manually modify first particle to test - make it very obvious
                 var testParticle = particles[0];
-                Vector3 originalPos = testParticle.position;
+                var originalPos = testParticle.position;
                 testParticle.position += Vector3.up * 2.0f; // Move up 2 units
                 testParticle.velocity = Vector3.zero; // Reset velocity
                 particles[0] = testParticle;
@@ -804,6 +867,50 @@ namespace SoftBody.Scripts
                 Debug.Log("CPU mode - manually updating mesh...");
                 UpdateCPU();
             }
+        }
+        
+        [ContextMenu("Test Single Thread Solving")]
+        public void TestSingleThreadSolving()
+        {
+            // Temporarily disable graph coloring
+            for (var i = 0; i < constraints.Count; i++)
+            {
+                var c = constraints[i];
+                c.colorGroup = i; // Each constraint gets unique color
+                constraints[i] = c;
+            }
+            constraintBuffer.SetData(constraints);
+    
+            Debug.Log($"Testing with {constraints.Count} sequential color groups");
+           
+        }
+        
+        [ContextMenu("Validate Constraint Data")]
+        public void ValidateConstraintData()
+        {
+            var constraintData = new Constraint[constraints.Count];
+            constraintBuffer.GetData(constraintData);
+    
+            var validConstraints = 0;
+            for (var i = 0; i < constraintData.Length; i++)
+            {
+                var c = constraintData[i];
+                if (c.particleA >= 0 && c.particleA < particles.Count &&
+                    c.particleB >= 0 && c.particleB < particles.Count &&
+                    c.restLength > 0)
+                {
+                    validConstraints++;
+                }
+        
+                if (i < 5) // Log first 5 constraints
+                {
+                    Debug.Log($"Constraint {i}: A={c.particleA}, B={c.particleB}, " +
+                              $"RestLength={c.restLength}, Compliance={c.compliance}, " +
+                              $"Lambda={c.lambda}, ColorGroup={c.colorGroup}");
+                }
+            }
+    
+            Debug.Log($"Valid constraints: {validConstraints}/{constraints.Count}");
         }
     }
 }
