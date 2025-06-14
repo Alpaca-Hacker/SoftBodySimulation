@@ -1419,7 +1419,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1050995942}
-  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+  m_Mesh: {fileID: 0}
 --- !u!114 &1050995945
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1433,20 +1433,17 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   computeShader: {fileID: 7200000, guid: ca8c23a401dc023488fe9b0e57404ced, type: 3}
-  meshType: 2
-  primitiveSize: 1
-  substeps: 30
-  solverIterations: 5
-  gravity: {x: 0, y: -10, z: 0}
-  damping: 0.26
-  distanceCompliance: 0.00001
-  bendingCompliance: 0.8
+  solverIterations: 30
+  globalCompliance: 0.01
+  gravity: {x: 0, y: 0, z: 0}
+  damping: 0.05
+  cubeSize: 1
+  particleMass: 1
+  addFaceDiagonals: 1
+  addInternalDiagonals: 1
   groundHeight: 0
-  friction: 0.3
-  inputReader: {fileID: 11400000, guid: 3a7fba4ee5e71fc40a5c690d4d0e8b37, type: 2}
-  enableDebug: 1
-  pinFirstParticle: 0
-  framesToDebug: 10
+  collisionCompliance: 0
+  friction: 0.2
 --- !u!4 &1050995946
 Transform:
   m_ObjectHideFlags: 0
@@ -1455,13 +1452,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1050995942}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0.64, z: 0}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.5, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1075855513
 GameObject:
   m_ObjectHideFlags: 0

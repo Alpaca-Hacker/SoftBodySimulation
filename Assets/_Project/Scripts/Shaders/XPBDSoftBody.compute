@@ -19,6 +19,7 @@ struct Constraint
     float restLength;
     float compliance;
     float lambda;
+    int colorGroup;
 };
 
 // Buffers
@@ -33,8 +34,9 @@ float damping;
 float stiffness;
 int particleCount;
 int constraintCount;
-float3 worldPosition; // Add world position for proper collision
-float floorY; // Floor collision level
+float3 worldPosition;
+float floorY;
+int currentColorGroup;
 
 // Thread group size
 #define THREAD_GROUP_SIZE 64
@@ -133,14 +135,17 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     
     Constraint c = constraints[index];
     
+    // CRITICAL: Only solve constraints in the current color group
+    if (c.colorGroup != currentColorGroup) return;
+    
     Particle pA = particles[c.particleA];
     Particle pB = particles[c.particleB];
     
     // Calculate current constraint violation
     float3 delta = pB.position - pA.position;
-    float currentLength = length(delta);
+    float currentLength = SafeLength(delta);
     
-    // Avoid division by zero
+    // Avoid solving degenerate constraints
     if (currentLength < 1e-6) return;
     
     float3 direction = delta / currentLength;
@@ -149,6 +154,9 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     // XPBD formulation with proper compliance
     float alphaTilde = c.compliance / (deltaTime * deltaTime);
     
+    // Ensure alphaTilde is not too small (causes infinite stiffness)
+    alphaTilde = max(alphaTilde, 1e-6);
+    
     // Calculate constraint mass (w = inverse mass)
     float wA = pA.invMass;
     float wB = pB.invMass;
@@ -156,29 +164,40 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     
     if (totalInvMass < 1e-6) return; // Both particles pinned
     
-    // XPBD constraint solving
+    // XPBD constraint solving equation - uses accumulated lambda
     float deltaLambda = (-constraintValue - alphaTilde * c.lambda) / 
                        (totalInvMass + alphaTilde);
     
+    // Clamp deltaLambda to prevent extreme corrections
+    deltaLambda = clamp(deltaLambda, -100.0, 100.0);
+    
+    // Update accumulated lambda
     c.lambda += deltaLambda;
     
-    // Apply position corrections
+    // Apply position corrections based on inverse mass ratios
     float3 correction = deltaLambda * direction;
     
+    // Apply corrections proportional to inverse mass
     if (wA > 0.0)
     {
-        pA.position -= correction * wA;
+        float3 correctionA = correction * wA;
+        pA.position -= correctionA;
     }
     
     if (wB > 0.0)
     {
-        pB.position += correction * wB;
+        float3 correctionB = correction * wB;
+        pB.position += correctionB;
     }
+    
+    // Validate positions after correction
+    pA.position = ValidatePosition(pA.position);
+    pB.position = ValidatePosition(pB.position);
     
     // Update particles and constraint
     particles[c.particleA] = pA;
     particles[c.particleB] = pB;
-    constraints[index] = c;
+    constraints[index] = c; // Save updated lambda back to buffer
 }
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
@@ -198,26 +217,4 @@ void UpdateMesh(uint3 id : SV_DispatchThreadID)
     
     // Convert world position to local position for mesh
     vertices[index] = position;
-}
-
-// Additional utility functions for advanced features
-
-float3 CalculateNormal(float3 p1, float3 p2, float3 p3)
-{
-    float3 v1 = p2 - p1;
-    float3 v2 = p3 - p1;
-    return normalize(cross(v1, v2));
-}
-
-// Collision detection helper
-bool SphereCollision(float3 position, float3 sphereCenter, float sphereRadius)
-{
-    float distance = length(position - sphereCenter);
-    return distance < sphereRadius;
-}
-
-// Volume preservation constraint (for more advanced soft bodies)
-float CalculateVolume(float3 p1, float3 p2, float3 p3, float3 p4)
-{
-    return dot(p4 - p1, cross(p2 - p1, p3 - p1)) / 6.0;
 }
