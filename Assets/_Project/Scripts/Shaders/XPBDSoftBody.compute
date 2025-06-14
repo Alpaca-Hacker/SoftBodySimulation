@@ -83,29 +83,16 @@ void IntegrateParticles(uint3 id : SV_DispatchThreadID)
     // Skip if particle is pinned
     if (p.invMass <= 0.0) return;
     
-    // Validate current state
-    p.position = ValidatePosition(p.position);
-    
-    // Clamp velocity to prevent runaway
-    const float MAX_VELOCITY = 20.0;
-    p.velocity = clamp(p.velocity, -MAX_VELOCITY, MAX_VELOCITY);
-    
     // Apply gravity
     float3 gravityForce = float3(0, -gravity, 0);
     p.force += gravityForce;
     
-    // Clamp forces
-    const float MAX_FORCE = 100.0;
-    p.force = clamp(p.force, -MAX_FORCE, MAX_FORCE);
-    
     // Semi-implicit Euler integration
     float3 acceleration = p.force * p.invMass;
-    
-    // Update velocity first
     p.velocity += acceleration * deltaTime;
     
     // Apply damping
-    p.velocity *= (1.0 - clamp(damping, 0.0, 0.99));
+    p.velocity *= (1.0 - damping);
     
     // Update position
     p.position += p.velocity * deltaTime;
@@ -116,23 +103,16 @@ void IntegrateParticles(uint3 id : SV_DispatchThreadID)
         p.position.y = floorY;
         if (p.velocity.y < 0)
         {
-            p.velocity.y = -p.velocity.y * 0.3; // Restitution
+            p.velocity.y = 0; // Just stop, don't bounce for now
         }
-        // Apply friction
-        p.velocity.x *= 0.95;
-        p.velocity.z *= 0.95;
     }
     
-    // Final validation
-    p.position = ValidatePosition(p.position);
-    
-    // Reset forces for next frame
+    // Reset forces
     p.force = float3(0, 0, 0);
     
     particles[index] = p;
 }
 
-// Modified SolveConstraints kernel with ground collision awareness
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
 void SolveConstraints(uint3 id : SV_DispatchThreadID)
 {
@@ -140,80 +120,67 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     if (index >= (uint)constraintCount) return;
     
     Constraint c = constraints[index];
+    
+    // Only solve constraints in the current color group
     if (c.colorGroup != currentColorGroup) return;
     
+    // Load particles
     Particle pA = particles[c.particleA];
     Particle pB = particles[c.particleB];
     
-    // Check if particles are on the ground
-    bool aOnGround = (pA.position.y <= floorY + 0.001);
-    bool bOnGround = (pB.position.y <= floorY + 0.001);
+    // Skip if both particles are fixed
+    if (pA.invMass == 0.0 && pB.invMass == 0.0) return;
     
+    // Calculate constraint violation
     float3 delta = pB.position - pA.position;
-    float currentLength = SafeLength(delta);
+    float currentLength = length(delta);
     
-    if (currentLength < 1e-6) return;
+    // Skip degenerate constraints
+    if (currentLength < 0.0001 || c.restLength < 0.0001) return;
     
     float3 direction = delta / currentLength;
-    float constraintValue = currentLength - c.restLength;
+    float constraintError = currentLength - c.restLength;
     
-    // Adjust compliance for ground contact
-    float effectiveCompliance = c.compliance;
-    if (aOnGround || bOnGround)
-    {
-        // Increase compliance (soften constraints) when in contact with ground
-        effectiveCompliance *= 10.0; // Experiment with this value
-    }
+    // PROPER XPBD FORMULATION
+    // Key fix: ensure compliance is properly scaled
+    float alphaTilde = c.compliance / (deltaTime * deltaTime);
     
-    float alphaTilde = effectiveCompliance / (deltaTime * deltaTime);
-    alphaTilde = max(alphaTilde, 1e-6);
-    
+    // Calculate effective masses
     float wA = pA.invMass;
     float wB = pB.invMass;
-    
-    // Modify mass for ground contact
-    if (aOnGround) wA *= 0.1; // Reduce mobility of grounded particles
-    if (bOnGround) wB *= 0.1;
-    
     float totalInvMass = wA + wB;
-    if (totalInvMass < 1e-6) return;
     
-    float deltaLambda = (-constraintValue - alphaTilde * c.lambda) / 
+    if (totalInvMass < 0.0001) return;
+    
+    // XPBD constraint solving with lambda
+    float deltaLambda = (-constraintError - alphaTilde * c.lambda) / 
                        (totalInvMass + alphaTilde);
     
-    // Clamp more aggressively for ground contact
-    float clampValue = (aOnGround || bOnGround) ? 10.0 : 100.0;
-    deltaLambda = clamp(deltaLambda, -clampValue, clampValue);
+    // Important: clamp delta lambda, not total lambda
+    deltaLambda = clamp(deltaLambda, -1.0, 1.0); // Much smaller clamp range
     
+    // Update lambda
     c.lambda += deltaLambda;
     
+    // Apply position corrections
     float3 correction = deltaLambda * direction;
     
-    // Apply corrections with ground constraint
-    if (wA > 0.0)
+    if (pA.invMass > 0.0)
     {
-        float3 correctionA = correction * wA;
-        pA.position -= correctionA;
-        
-        // Ensure particle doesn't go below ground
-        pA.position.y = max(pA.position.y, floorY);
+        pA.position -= correction * pA.invMass;
+        // Don't clamp to ground here - let integration handle it
     }
     
-    if (wB > 0.0)
+    if (pB.invMass > 0.0)
     {
-        float3 correctionB = correction * wB;
-        pB.position += correctionB;
-        
-        // Ensure particle doesn't go below ground
-        pB.position.y = max(pB.position.y, floorY);
+        pB.position += correction * pB.invMass;
+        // Don't clamp to ground here - let integration handle it
     }
     
-    pA.position = ValidatePosition(pA.position);
-    pB.position = ValidatePosition(pB.position);
-    
+    // Write back
     particles[c.particleA] = pA;
     particles[c.particleB] = pB;
-    constraints[index] = c;
+    constraints[index] = c; // Save lambda
 }
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]

@@ -15,12 +15,12 @@ namespace SoftBody.Scripts
         public float mass = 1f;
         [Range(0f, 1f)]
         public float damping = 0.01f;
-        [Range(0f, 2f)]
+        [Range(0f, 20f)]
         public float gravity = 9.81f;
     
         [Header("Constraints")]
-        [Range(0.1f, 1000f)]
-        public float stiffness = 100f;
+        [Range(0.1f, 1f)]
+        public float stiffness = 0.5f;
         [Range(1, 10)]
         public int solverIterations = 4;
         [Range(0f, 1f)]
@@ -32,5 +32,18 @@ namespace SoftBody.Scripts
         
         [Header("Debug Options")]
         public bool useCPUFallback = false; 
+        
+        public void LogSettings()
+        {
+            Debug.Log($"SoftBody Settings: Size={size}, " +
+                      $"Resolution={resolution}, " +
+                      $"Mass={mass}, " +
+                      $"Damping={damping}, " +
+                      $"Gravity={gravity}, " +
+                      $"Stiffness={stiffness}, " +
+                      $"SolverIterations={solverIterations}, " +
+                      $"Compliance={compliance}, " +
+                      $"EnableCollision={enableCollision}");
+        }
     }
 }

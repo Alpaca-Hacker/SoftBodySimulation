@@ -52,10 +52,11 @@ namespace SoftBody.Scripts
             GenerateMesh();
             SetupBuffers();
             SetupRenderMaterial();
+            
 
             // Diagnostic: Check if we have valid data
             Debug.Log($"Initialization complete. Particles: {particles?.Count}, Constraints: {constraints?.Count}");
-
+            settings.LogSettings();
             // Test: Manually move one particle to verify the system works
             if (particles != null && particles.Count > 0)
             {
@@ -130,11 +131,8 @@ namespace SoftBody.Scripts
             }
             
             AddDistanceConstraints();
-            
             AddVolumeConstraints();
-            
             ApplyGraphColoring();
-
             GenerateMeshTopology();
         }
 
@@ -197,8 +195,6 @@ namespace SoftBody.Scripts
                 Debug.Log($"Added volume preservation constraints. Total constraints: {constraints.Count}");
             }
         
-        
-        
 
         private void ApplyGraphColoring()
         {
@@ -253,6 +249,12 @@ namespace SoftBody.Scripts
         private void AddConstraint(int a, int b)
         {
             var restLength = Vector3.Distance(particles[a].position, particles[b].position);
+            
+            if (restLength < 0.001f)
+            {
+                Debug.LogWarning($"Skipping degenerate constraint between {a} and {b}");
+                return;
+            }
 
             var constraint = new Constraint
             {
@@ -260,8 +262,8 @@ namespace SoftBody.Scripts
                 particleB = b,
                 restLength = restLength,
                 compliance = settings.compliance,
-                lambda = 0f, // Initialize accumulated lambda
-                colorGroup = 0 // Will be set by graph coloring
+                lambda = 0f,
+                colorGroup = 0
             };
 
             constraints.Add(constraint);
@@ -456,27 +458,31 @@ namespace SoftBody.Scripts
             
             if (threadGroups > 0)
             {
-                computeShader.Dispatch(kernelDecayLambdas, threadGroups, 1, 1);
+             //   computeShader.Dispatch(kernelDecayLambdas, threadGroups, 1, 1);
+                ResetLambdas();
                 computeShader.Dispatch(kernelIntegrate, threadGroups, 1, 1);
             }
 
-            // Solve constraints by color groups to prevent race conditions
-            var maxColorGroup = GetMaxColorGroup();
-
-            if (Time.frameCount % 60 == 0)
+            for (var iter = 0; iter < settings.solverIterations; iter++)
             {
-                Debug.Log($"Solving {maxColorGroup + 1} colour groups with compliance={settings.compliance}");
-            }
+                // Solve constraints by color groups to prevent race conditions
+                var maxColorGroup = GetMaxColorGroup();
 
-            for (var colorGroup = 0; colorGroup <= maxColorGroup; colorGroup++)
-            {
-                // Set current color group
-                computeShader.SetInt("currentColorGroup", colorGroup);
+                // if (Time.frameCount % 60 == 0)
+                // {
+                //     Debug.Log($"Solving {maxColorGroup + 1} colour groups with compliance={settings.compliance}");
+                // }
 
-                threadGroups = Mathf.CeilToInt(constraints.Count / 64f);
-                if (threadGroups > 0)
+                for (var colorGroup = 0; colorGroup <= maxColorGroup; colorGroup++)
                 {
-                    computeShader.Dispatch(kernelSolveConstraints, threadGroups, 1, 1);
+                    // Set current color group
+                    computeShader.SetInt("currentColorGroup", colorGroup);
+
+                    threadGroups = Mathf.CeilToInt(constraints.Count / 64f);
+                    if (threadGroups > 0)
+                    {
+                        computeShader.Dispatch(kernelSolveConstraints, threadGroups, 1, 1);
+                    }
                 }
             }
 
@@ -911,6 +917,60 @@ namespace SoftBody.Scripts
             }
     
             Debug.Log($"Valid constraints: {validConstraints}/{constraints.Count}");
+        }
+
+        [ContextMenu("Reset Lambdas")]
+        private void ResetLambdas()
+        {
+            var constraintData = new Constraint[constraints.Count];
+            constraintBuffer.GetData(constraintData);
+
+            for (var i = 0; i < constraintData.Length; i++)
+            {
+                constraintData[i].lambda = 0f;
+            }
+
+            constraintBuffer.SetData(constraintData);
+        }
+
+        [ContextMenu("Simple Two Particle Test")]
+        public void SimpleTwoParticleTest()
+        {
+            // Create just 2 particles
+            particles = new List<Particle>();
+            constraints = new List<Constraint>();
+
+            // Particle 0 at origin (fixed)
+            particles.Add(new Particle
+            {
+                position = Vector3.zero,
+                velocity = Vector3.zero,
+                force = Vector3.zero,
+                invMass = 0f // Fixed
+            });
+
+            // Particle 1 stretched away
+            particles.Add(new Particle
+            {
+                position = new Vector3(2f, 0, 0), // Stretched
+                velocity = Vector3.zero,
+                force = Vector3.zero,
+                invMass = 1f
+            });
+
+            // One constraint with rest length 1
+            constraints.Add(new Constraint
+            {
+                particleA = 0,
+                particleB = 1,
+                restLength = 1f,
+                compliance = 0.0f, // Perfectly stiff
+                lambda = 0f,
+                colorGroup = 0
+            });
+
+            SetupBuffers();
+            Debug.Log("Simple test setup: 2 particles, 1 constraint");
         }
     }
 }
