@@ -6,6 +6,7 @@
 #pragma kernel DecayLambdas
 #pragma kernel ValidateColorGroups
 #pragma kernel ComputeDiagnostics
+#pragma kernel ApplyFloorConstraint
 
 struct Particle
 {
@@ -80,7 +81,6 @@ void IntegrateParticles(uint3 id : SV_DispatchThreadID)
     
     Particle p = particles[index];
     
-    // Skip if particle is pinned
     if (p.invMass <= 0.0) return;
     
     // Apply gravity
@@ -91,21 +91,11 @@ void IntegrateParticles(uint3 id : SV_DispatchThreadID)
     float3 acceleration = p.force * p.invMass;
     p.velocity += acceleration * deltaTime;
     
-    // Apply damping
-    p.velocity *= (1.0 - damping);
+    // Apply damping ONCE
+    p.velocity *= (1.0 - damping * deltaTime); // Scale by deltaTime!
     
     // Update position
     p.position += p.velocity * deltaTime;
-    
-    // Floor collision with proper response
-    if (p.position.y < floorY)
-    {
-        p.position.y = floorY;
-        if (p.velocity.y < 0)
-        {
-            p.velocity.y = 0; // Just stop, don't bounce for now
-        }
-    }
     
     // Reset forces
     p.force = float3(0, 0, 0);
@@ -141,9 +131,12 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     float3 direction = delta / currentLength;
     float constraintError = currentLength - c.restLength;
     
-    // PROPER XPBD FORMULATION
-    // Key fix: ensure compliance is properly scaled
+    // XPBD constraint solving
+    // alphaTilde is calculated HERE using the constraint's compliance
     float alphaTilde = c.compliance / (deltaTime * deltaTime);
+    
+    // Ensure alphaTilde isn't too small
+    alphaTilde = max(alphaTilde, 1e-10);
     
     // Calculate effective masses
     float wA = pA.invMass;
@@ -152,15 +145,19 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     
     if (totalInvMass < 0.0001) return;
     
-    // XPBD constraint solving with lambda
+    // XPBD solving equation
     float deltaLambda = (-constraintError - alphaTilde * c.lambda) / 
                        (totalInvMass + alphaTilde);
     
-    // Important: clamp delta lambda, not total lambda
-    deltaLambda = clamp(deltaLambda, -1.0, 1.0); // Much smaller clamp range
+    // Clamp delta lambda to prevent explosions
+    float maxCorrection = c.restLength * 0.1; // 10% of rest length
+    deltaLambda = clamp(deltaLambda, -maxCorrection, maxCorrection);
     
-    // Update lambda
+    // Update accumulated lambda
     c.lambda += deltaLambda;
+    
+    // Optional: clamp total lambda to prevent drift
+    c.lambda = clamp(c.lambda, -100.0, 100.0);
     
     // Apply position corrections
     float3 correction = deltaLambda * direction;
@@ -168,19 +165,17 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     if (pA.invMass > 0.0)
     {
         pA.position -= correction * pA.invMass;
-        // Don't clamp to ground here - let integration handle it
     }
     
     if (pB.invMass > 0.0)
     {
         pB.position += correction * pB.invMass;
-        // Don't clamp to ground here - let integration handle it
     }
     
     // Write back
     particles[c.particleA] = pA;
     particles[c.particleB] = pB;
-    constraints[index] = c; // Save lambda
+    constraints[index] = c;
 }
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
@@ -272,4 +267,50 @@ void ComputeDiagnostics(uint3 id : SV_DispatchThreadID)
     }
     
     debugBuffer[0] = float4(maxVel, maxError, totalLambda / constraintCount, groundCount);
+}
+
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void ApplyFloorConstraint(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= (uint)particleCount) return;
+    
+    Particle p = particles[index];
+    
+    if (p.invMass <= 0.0) return;
+    
+    // More robust floor collision
+    float penetration = floorY - p.position.y;
+    
+    if (penetration > 0)
+    {
+        // Project position back to floor with small offset
+        p.position.y = floorY + 0.001; // Small offset prevents z-fighting
+        
+        // Reflect velocity based on penetration depth
+        if (p.velocity.y < 0)
+        {
+            // Stronger response for deeper penetrations
+            float restitution = 0.1;
+            p.velocity.y = abs(p.velocity.y) * restitution + penetration * 10.0;
+            
+            // Apply friction proportional to normal force
+            float normalForce = abs(p.velocity.y) + penetration * 100.0;
+            float frictionCoeff = 0.5;
+            
+            float2 horizontalVel = float2(p.velocity.x, p.velocity.z);
+            float horizontalSpeed = length(horizontalVel);
+            
+            if (horizontalSpeed > 0.001)
+            {
+                float2 frictionDir = horizontalVel / horizontalSpeed;
+                float frictionMagnitude = min(horizontalSpeed, normalForce * frictionCoeff * deltaTime);
+                
+                p.velocity.x -= frictionDir.x * frictionMagnitude;
+                p.velocity.z -= frictionDir.y * frictionMagnitude;
+            }
+        }
+    }
+    
+    particles[index] = p;
 }

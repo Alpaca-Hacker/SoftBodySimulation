@@ -1,5 +1,7 @@
 
 using System.Collections.Generic;
+using System.Linq;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace SoftBody.Scripts
@@ -18,7 +20,7 @@ namespace SoftBody.Scripts
             public float invMass;
         }
 
-        private struct Constraint
+        public struct Constraint
         {
             public int particleA;
             public int particleB;
@@ -44,24 +46,34 @@ namespace SoftBody.Scripts
         private int kernelUpdateMesh;
         private int kernelDecayLambdas;
         private int kernelComputeDiagnostics;
+        private int kernelApplyFloorConstraint;
 
         private void Start()
         {
-            Debug.Log("SoftBodySimulator: Starting initialization...");
-            InitializeComputeShader();
-            GenerateMesh();
-            SetupBuffers();
-            SetupRenderMaterial();
-            
-
-            // Diagnostic: Check if we have valid data
-            Debug.Log($"Initialization complete. Particles: {particles?.Count}, Constraints: {constraints?.Count}");
-            settings.LogSettings();
-            // Test: Manually move one particle to verify the system works
-            if (particles != null && particles.Count > 0)
+            try
             {
-                var testParticle = particles[0];
-                Debug.Log($"First particle position: {testParticle.position}, invMass: {testParticle.invMass}");
+                Debug.Log("SoftBodySimulator: Starting initialization...");
+                InitializeComputeShader();
+                GenerateMesh();
+                SetupBuffers();
+                SetupRenderMaterial();
+        
+                // Diagnostic: Check if we have valid data
+                Debug.Log($"Initialization complete. Particles: {particles?.Count}, Constraints: {constraints?.Count}");
+                settings.LogSettings();
+        
+                // Test: Manually move one particle to verify the system works
+                if (particles != null && particles.Count > 0)
+                {
+                    var testParticle = particles[0];
+                    Debug.Log($"First particle position: {testParticle.position}, invMass: {testParticle.invMass}");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"Initialization failed: {e.Message}\n{e.StackTrace}");
+                // Ensure we're in a safe state
+                settings.useCPUFallback = true;
             }
         }
 
@@ -78,6 +90,7 @@ namespace SoftBody.Scripts
             kernelUpdateMesh = computeShader.FindKernel("UpdateMesh");
             kernelDecayLambdas = computeShader.FindKernel("DecayLambdas");
             kernelComputeDiagnostics = computeShader.FindKernel("ComputeDiagnostics");
+            kernelApplyFloorConstraint = computeShader.FindKernel("ApplyFloorConstraint");
 
             // Verify all kernels were found
             if (kernelIntegrate == -1 || kernelSolveConstraints == -1 || kernelUpdateMesh == -1 || kernelDecayLambdas == -1)
@@ -130,8 +143,11 @@ namespace SoftBody.Scripts
                 }
             }
             
-            AddDistanceConstraints();
-            AddVolumeConstraints();
+            //  AddDistanceConstraints();
+            //   AddVolumeConstraints();
+            GenerateStructuralConstraints();  // Main edges
+            GenerateShearConstraints();       // Face diagonals  
+            GenerateBendConstraints();        // Volume diagonals
             ApplyGraphColoring();
             GenerateMeshTopology();
         }
@@ -195,10 +211,111 @@ namespace SoftBody.Scripts
                 Debug.Log($"Added volume preservation constraints. Total constraints: {constraints.Count}");
             }
         
+        private void GenerateStructuralConstraints()
+        {
+            var res = settings.resolution;
+    
+            // Edge constraints (what you have now)
+            for (var x = 0; x < res; x++)
+            {
+                for (var y = 0; y < res; y++)
+                {
+                    for (var z = 0; z < res; z++)
+                    {
+                        var index = x * res * res + y * res + z;
+                
+                        if (x < res - 1) AddConstraint(index, (x + 1) * res * res + y * res + z, settings.structuralCompliance);
+                        if (y < res - 1) AddConstraint(index, x * res * res + (y + 1) * res + z, settings.structuralCompliance);
+                        if (z < res - 1) AddConstraint(index, x * res * res + y * res + (z + 1), settings.structuralCompliance);
+                    }
+                }
+            }
+        }
 
+        private void GenerateShearConstraints()
+        {
+            var res = settings.resolution;
+
+            // Face diagonals - prevent shearing
+            for (var x = 0; x < res - 1; x++)
+            {
+                for (var y = 0; y < res - 1; y++)
+                {
+                    for (var z = 0; z < res - 1; z++)
+                    {
+                        // XY face diagonals
+                        AddConstraint(
+                            x * res * res + y * res + z,
+                            (x + 1) * res * res + (y + 1) * res + z,
+                            settings.shearCompliance
+                        );
+
+                        // XZ face diagonals  
+                        AddConstraint(
+                            x * res * res + y * res + z,
+                            (x + 1) * res * res + y * res + (z + 1),
+                            settings.shearCompliance
+                        );
+
+                        // YZ face diagonals
+                        AddConstraint(
+                            x * res * res + y * res + z,
+                            x * res * res + (y + 1) * res + (z + 1),
+                            settings.shearCompliance
+                        );
+                    }
+                }
+            }
+        }
+        private void GenerateBendConstraints()
+        {
+            var res = settings.resolution;
+    
+            // Long-range constraints for volume preservation
+            for (var x = 0; x < res - 1; x++)
+            {
+                for (var y = 0; y < res - 1; y++)
+                {
+                    for (var z = 0; z < res - 1; z++)
+                    {
+                        // Cube diagonals
+                        AddConstraint(
+                            x * res * res + y * res + z,
+                            (x + 1) * res * res + (y + 1) * res + (z + 1),
+                            settings.bendCompliance
+                        );
+                    }
+                }
+            }
+        }
+        
         private void ApplyGraphColoring()
         {
-            Debug.Log($"Applying graph coloring to {constraints.Count} constraints...");
+            // Initialize all constraints with color group 0 as fallback
+            for (var i = 0; i < constraints.Count; i++)
+            {
+                var c = constraints[i];
+                c.colorGroup = 0;
+                constraints[i] = c;
+            }
+    
+            try
+            {
+                // Try graph clustering
+                var clusters = GraphClustering.CreateClusters(constraints, particles.Count);
+                GraphClustering.ColorClusters(clusters, constraints);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"Graph clustering failed: {e.Message}, using naive coloring");
+                ApplyNaiveGraphColoring();
+            }
+        }
+        
+        
+        private void ApplyNaiveGraphColoring()
+        {
+            Debug.Log($"Applying naive graph coloring to {constraints.Count} constraints...");
 
             // Simple greedy graph coloring algorithm
             var coloredConstraints = new List<Constraint>();
@@ -245,23 +362,25 @@ namespace SoftBody.Scripts
 
             Debug.Log($"Graph coloring complete: {maxColor + 1} color groups needed");
         }
+        
+        
 
-        private void AddConstraint(int a, int b)
+        private void AddConstraint(int a, int b, float compliance = float.PositiveInfinity)
         {
-            var restLength = Vector3.Distance(particles[a].position, particles[b].position);
-            
-            if (restLength < 0.001f)
+            if (float.IsPositiveInfinity(compliance))
             {
-                Debug.LogWarning($"Skipping degenerate constraint between {a} and {b}");
-                return;
+                compliance = settings.compliance; // Use default compliance if not specified
             }
+            var restLength = Vector3.Distance(particles[a].position, particles[b].position);
+    
+            if (restLength < 0.001f) return;
 
             var constraint = new Constraint
             {
                 particleA = a,
                 particleB = b,
                 restLength = restLength,
-                compliance = settings.compliance,
+                compliance = compliance, // Scale compliance
                 lambda = 0f,
                 colorGroup = 0
             };
@@ -438,7 +557,7 @@ namespace SoftBody.Scripts
             computeShader.SetVector("worldPosition", transform.position);
             computeShader.SetInt("particleCount", particles.Count);
             computeShader.SetInt("constraintCount", constraints.Count);
-            computeShader.SetFloat("lambdaDecay", 0.95f);
+            computeShader.SetFloat("lambdaDecay", settings.lambdaDecay);
 
 
             // Bind buffers to all kernels
@@ -450,17 +569,22 @@ namespace SoftBody.Scripts
             computeShader.SetBuffer(kernelDecayLambdas, "constraints", constraintBuffer);
             computeShader.SetBuffer(kernelComputeDiagnostics, "particles", particleBuffer);
             computeShader.SetBuffer(kernelComputeDiagnostics, "constraints", constraintBuffer);
+            computeShader.SetBuffer(kernelApplyFloorConstraint, "particles", particleBuffer);
             computeShader.SetBuffer(kernelComputeDiagnostics, "debugBuffer", debugBuffer);
          
 
             // Integrate particles
-            var threadGroups = Mathf.CeilToInt(particles.Count / 64f);
+            var constraintThreadGroups = Mathf.CeilToInt(constraints.Count / 64f);
+            var particleThreadGroups = Mathf.CeilToInt(particles.Count / 64f);
             
-            if (threadGroups > 0)
+            if (constraintThreadGroups > 0)
             {
-             //   computeShader.Dispatch(kernelDecayLambdas, threadGroups, 1, 1);
-                ResetLambdas();
-                computeShader.Dispatch(kernelIntegrate, threadGroups, 1, 1);
+                computeShader.Dispatch(kernelDecayLambdas, constraintThreadGroups, 1, 1);
+            }
+            
+            if (particleThreadGroups > 0)
+            {
+                computeShader.Dispatch(kernelIntegrate, particleThreadGroups, 1, 1);
             }
 
             for (var iter = 0; iter < settings.solverIterations; iter++)
@@ -468,37 +592,37 @@ namespace SoftBody.Scripts
                 // Solve constraints by color groups to prevent race conditions
                 var maxColorGroup = GetMaxColorGroup();
 
-                // if (Time.frameCount % 60 == 0)
-                // {
-                //     Debug.Log($"Solving {maxColorGroup + 1} colour groups with compliance={settings.compliance}");
-                // }
+                if (Time.frameCount % 60 == 0 && settings.debugMode)
+                {
+                    Debug.Log($"Solving {maxColorGroup + 1} colour groups with compliance={settings.compliance}");
+                }
 
                 for (var colorGroup = 0; colorGroup <= maxColorGroup; colorGroup++)
                 {
                     // Set current color group
                     computeShader.SetInt("currentColorGroup", colorGroup);
-
-                    threadGroups = Mathf.CeilToInt(constraints.Count / 64f);
-                    if (threadGroups > 0)
+                    
+                    if (constraintThreadGroups > 0)
                     {
-                        computeShader.Dispatch(kernelSolveConstraints, threadGroups, 1, 1);
+                        computeShader.Dispatch(kernelSolveConstraints, constraintThreadGroups, 1, 1);
                     }
                 }
+                
+                computeShader.Dispatch(kernelApplyFloorConstraint, particleThreadGroups, 1, 1);
             }
 
             // Update mesh vertices (only on last substep to save bandwidth)
             if (isLastSubstep)
             {
-                threadGroups = Mathf.CeilToInt(particles.Count / 64f);
-                if (threadGroups > 0)
+                if (particleThreadGroups > 0)
                 {
-                    computeShader.Dispatch(kernelUpdateMesh, threadGroups, 1, 1);
+                    computeShader.Dispatch(kernelUpdateMesh, particleThreadGroups, 1, 1);
                 }
             }
             
             computeShader.Dispatch(kernelComputeDiagnostics, 1, 1, 1);
             
-            if (Time.frameCount % 30 == 0)
+            if (Time.frameCount % 30 == 0 && settings.debugMode)
             {
                 var debugData = new float[4];
                 debugBuffer.GetData(debugData);
@@ -509,13 +633,7 @@ namespace SoftBody.Scripts
 
         private int GetMaxColorGroup()
         {
-            var maxColor = 0;
-            foreach (var constraint in constraints)
-            {
-                maxColor = Mathf.Max(maxColor, constraint.colorGroup);
-            }
-
-            return maxColor;
+            return constraints.Max(c => c.colorGroup);
         }
 
         // CPU fallback for testing and debugging
@@ -785,6 +903,12 @@ namespace SoftBody.Scripts
             if (constraintBuffer != null) constraintBuffer.Release();
             if (vertexBuffer != null) vertexBuffer.Release();
             if (indexBuffer != null) indexBuffer.Release();
+            if (debugBuffer != null) debugBuffer.Release();
+            if (mesh != null)
+            {
+                Destroy(mesh);
+            }
+            
         }
 
         private void OnValidate()
@@ -972,5 +1096,6 @@ namespace SoftBody.Scripts
             SetupBuffers();
             Debug.Log("Simple test setup: 2 particles, 1 constraint");
         }
+        
     }
 }
